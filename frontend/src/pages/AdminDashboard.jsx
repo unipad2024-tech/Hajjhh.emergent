@@ -34,7 +34,7 @@ export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState("questions");
 
   // New category form
-  const [catForm, setCatForm] = useState({ name: "", icon: "", description: "", is_special: false, color: "#5B0E14" });
+  const [catForm, setCatForm] = useState({ name: "", icon: "", description: "", is_special: false, color: "#5B0E14", image_url: "" });
   const [showCatForm, setShowCatForm] = useState(false);
 
   useEffect(() => {
@@ -139,7 +139,7 @@ export default function AdminDashboard() {
       await axios.post(`${API}/categories`, catForm, { headers });
       toast.success("تمت إضافة الفئة");
       setShowCatForm(false);
-      setCatForm({ name: "", icon: "", description: "", is_special: false, color: "#5B0E14" });
+      setCatForm({ name: "", icon: "", description: "", is_special: false, color: "#5B0E14", image_url: "" });
       loadData();
     } catch { toast.error("خطأ"); }
   };
@@ -632,6 +632,18 @@ export default function AdminDashboard() {
                 placeholder="وصف الفئة (اختياري)"
                 className="w-full border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none"
               />
+              <div>
+                <label className="text-sm font-bold text-primary/70 mb-1 block">رابط صورة الفئة</label>
+                <input
+                  value={catForm.image_url}
+                  onChange={(e) => setCatForm({ ...catForm, image_url: e.target.value })}
+                  placeholder="https://... (رابط الصورة)"
+                  className="w-full border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none"
+                />
+                {catForm.image_url && (
+                  <img src={catForm.image_url} alt="" className="mt-2 h-20 w-full object-cover rounded-xl" onError={(e) => e.target.style.display = "none"} />
+                )}
+              </div>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"

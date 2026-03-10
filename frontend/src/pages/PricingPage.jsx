@@ -11,26 +11,26 @@ const PLANS = [
   {
     id: "monthly",
     name: "المميز الشهري",
-    price: "9.99$",
+    price: "19.99 ريال",
     period: "/ شهرياً",
     color: "#F1E194",
     features: [
       "أسئلة عشوائية لا تتكرر أبداً",
+      "الوصول لجميع الفئات (10 فئات)",
       "تتبع تقدمك عبر الجلسات",
       "إحصاءات مباراتك",
-      "أولوية في الأسئلة الجديدة",
     ],
   },
   {
     id: "annual",
     name: "المميز السنوي",
-    price: "79.99$",
+    price: "149.99 ريال",
     period: "/ سنوياً",
-    badge: "وفّر 33%",
+    badge: "وفّر 37%",
     color: "#F1E194",
     features: [
       "كل مميزات الخطة الشهرية",
-      "توفير 33% مقارنة بالشهري",
+      "توفير 37% مقارنة بالشهري",
       "دعم أولوي",
     ],
   },
@@ -100,9 +100,9 @@ export default function PricingPage() {
         {/* Free vs Premium comparison */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-10 animate-fade-in-up" style={{ animationDelay: "0.1s" }}>
           {[
-            { label: "ضيف", features: ["اللعب بدون حساب", "الأسئلة قد تتكرر", "بدون حفظ تقدم"], isFree: true, isGuest: true },
-            { label: "مجاني", features: ["حساب مجاني", "تتبع عدد المباريات", "الأسئلة قد تتكرر"], isFree: true },
-            { label: "مميز", features: ["أسئلة لا تتكرر", "تتبع كامل للتقدم", "دعم أولوي", "أسئلة جديدة أولاً"], isFree: false },
+            { label: "ضيف", features: ["اللعب بدون حساب", "6 فئات ثابتة فقط", "الأسئلة قد تتكرر", "بدون حفظ تقدم"], isFree: true, isGuest: true },
+            { label: "مجاني", features: ["حساب مجاني", "6 فئات ثابتة فقط", "الأسئلة قد تتكرر", "تتبع عدد المباريات"], isFree: true },
+            { label: "مميز", features: ["جميع الفئات (10 فئات)", "أسئلة لا تتكرر أبداً", "تتبع كامل للتقدم", "دعم أولوي"], isFree: false },
           ].map((tier) => (
             <div
               key={tier.label}

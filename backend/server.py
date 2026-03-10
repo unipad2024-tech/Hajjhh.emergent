@@ -34,9 +34,11 @@ logger = logging.getLogger(__name__)
 
 # ─── Subscription Plans (server-side only – never from frontend) ────────────
 SUBSCRIPTION_PLANS = {
-    "monthly": {"name": "Premium شهري",   "amount": 9.99,  "currency": "usd", "days": 30},
-    "annual":  {"name": "Premium سنوي",   "amount": 79.99, "currency": "usd", "days": 365},
+    "monthly": {"name": "Premium شهري",   "amount": 19.99, "currency": "sar", "days": 30},
+    "annual":  {"name": "Premium سنوي",   "amount": 149.99,"currency": "sar", "days": 365},
 }
+
+FREE_CATEGORIES = ["cat_word", "cat_islamic", "cat_music", "cat_flags", "cat_easy", "cat_science"]
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MODELS
@@ -341,6 +343,11 @@ async def admin_payments(_: bool = Depends(get_admin)):
 async def get_categories():
     return await db.categories.find({}, {"_id": 0}).sort("order", 1).to_list(100)
 
+@api_router.get("/free-categories")
+async def get_free_categories():
+    cats = await db.categories.find({"id": {"$in": FREE_CATEGORIES}}, {"_id": 0}).to_list(10)
+    return {"category_ids": FREE_CATEGORIES, "categories": cats}
+
 @api_router.post("/categories")
 async def create_category(body: CategoryCreate, _: bool = Depends(get_admin)):
     cat = Category(**body.model_dump())
@@ -637,16 +644,16 @@ async def seed_data(force: bool = False, _: bool = Depends(get_admin)):
         await db.questions.delete_many({})
 
     categories = [
-        {"id":"cat_flags",   "name":"اعلام دول",      "icon":"🏳️","image_url":"","is_special":False,"color":"#166534","order":1,"description":"خمّن علم الدولة!","created_at":datetime.now(timezone.utc).isoformat()},
-        {"id":"cat_easy",    "name":"معلومات سهلة",   "icon":"💡","image_url":"","is_special":False,"color":"#1e40af","order":2,"description":"معلومات للجميع","created_at":datetime.now(timezone.utc).isoformat()},
-        {"id":"cat_saudi",   "name":"السعودية",       "icon":"🇸🇦","image_url":"","is_special":False,"color":"#5B0E14","order":3,"description":"أسئلة عن المملكة","created_at":datetime.now(timezone.utc).isoformat()},
-        {"id":"cat_islamic", "name":"اسلامي",         "icon":"☪️","image_url":"","is_special":False,"color":"#065f46","order":4,"description":"أسئلة إسلامية","created_at":datetime.now(timezone.utc).isoformat()},
-        {"id":"cat_science", "name":"علوم بسيطة",     "icon":"🔬","image_url":"","is_special":False,"color":"#4c1d95","order":5,"description":"علوم للجميع","created_at":datetime.now(timezone.utc).isoformat()},
-        {"id":"cat_logos",   "name":"شعارات",         "icon":"🏷️","image_url":"","is_special":False,"color":"#7c2d12","order":6,"description":"خمّن الشعار!","created_at":datetime.now(timezone.utc).isoformat()},
-        {"id":"cat_word",    "name":"ولا كلمة",       "icon":"🤫","image_url":"","is_special":True, "color":"#4a044e","order":7,"description":"وصّف بدون ما تقول الكلمة!","created_at":datetime.now(timezone.utc).isoformat()},
-        {"id":"cat_culture", "name":"ثقافة شعبية",    "icon":"🎬","image_url":"","is_special":False,"color":"#831843","order":8,"description":"مسلسلات وأفلام وبرامج","created_at":datetime.now(timezone.utc).isoformat()},
-        {"id":"cat_sports",  "name":"رياضة",          "icon":"⚽","image_url":"","is_special":False,"color":"#134e4a","order":9,"description":"كرة وبطولات","created_at":datetime.now(timezone.utc).isoformat()},
-        {"id":"cat_music",   "name":"موسيقى وفن",     "icon":"🎵","image_url":"","is_special":False,"color":"#1e3a5f","order":10,"description":"أغاني وفنانين","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_flags",   "name":"اعلام دول",      "icon":"🏳️","image_url":"https://images.unsplash.com/photo-1651421479704-470a78eef530?crop=entropy&cs=srgb&fm=jpg&q=85","is_special":False,"color":"#166534","order":1,"description":"خمّن علم الدولة!","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_easy",    "name":"معلومات عامة",   "icon":"💡","image_url":"https://images.unsplash.com/photo-1755700968898-60eff7c6cf76?crop=entropy&cs=srgb&fm=jpg&q=85","is_special":False,"color":"#1e40af","order":2,"description":"معلومات للجميع","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_saudi",   "name":"السعودية",       "icon":"🇸🇦","image_url":"https://images.unsplash.com/photo-1722966885396-1f3dcebdf27f?crop=entropy&cs=srgb&fm=jpg&q=85","is_special":False,"color":"#5B0E14","order":3,"description":"أسئلة عن المملكة","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_islamic", "name":"اسلامي",         "icon":"☪️","image_url":"https://images.unsplash.com/photo-1759505820572-2ee950ffe6f5?crop=entropy&cs=srgb&fm=jpg&q=85","is_special":False,"color":"#065f46","order":4,"description":"أسئلة إسلامية","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_science", "name":"علوم",           "icon":"🔬","image_url":"https://images.unsplash.com/photo-1571763613035-cb45f652a118?crop=entropy&cs=srgb&fm=jpg&q=85","is_special":False,"color":"#4c1d95","order":5,"description":"علوم للجميع","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_logos",   "name":"شعارات",         "icon":"🏷️","image_url":"https://images.unsplash.com/photo-1764229119403-42059dac36a4?crop=entropy&cs=srgb&fm=jpg&q=85","is_special":False,"color":"#7c2d12","order":6,"description":"خمّن الشعار!","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_word",    "name":"ولا كلمة",       "icon":"🤫","image_url":"https://images.unsplash.com/photo-1523453127991-4e6c0eec474f?crop=entropy&cs=srgb&fm=jpg&q=85","is_special":True, "color":"#4a044e","order":7,"description":"وصّف بدون ما تقول الكلمة!","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_culture", "name":"ثقافة شعبية",    "icon":"🎬","image_url":"https://images.unsplash.com/photo-1771909752746-8fd6c4ca6686?crop=entropy&cs=srgb&fm=jpg&q=85","is_special":False,"color":"#831843","order":8,"description":"مسلسلات وأفلام وبرامج","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_sports",  "name":"رياضة",          "icon":"⚽","image_url":"https://images.unsplash.com/photo-1600442715978-d0268caa17f5?crop=entropy&cs=srgb&fm=jpg&q=85","is_special":False,"color":"#134e4a","order":9,"description":"كرة وبطولات","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_music",   "name":"موسيقى وفن",     "icon":"🎵","image_url":"https://images.unsplash.com/photo-1624352545753-7001a44a0f19?crop=entropy&cs=srgb&fm=jpg&q=85","is_special":False,"color":"#1e3a5f","order":10,"description":"أغاني وفنانين","created_at":datetime.now(timezone.utc).isoformat()},
     ]
     await db.categories.insert_many(categories)
 

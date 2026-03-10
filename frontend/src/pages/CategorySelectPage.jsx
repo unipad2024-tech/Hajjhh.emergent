@@ -6,53 +6,65 @@ import { toast } from "sonner";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-const CATEGORY_ICONS = {
-  cat_flags: "🏳️", cat_easy: "💡", cat_saudi: "🇸🇦",
-  cat_islamic: "☪️", cat_science: "🔬", cat_logos: "🏷️", cat_word: "🤫",
-};
+// 6 fixed free categories (split 3+3 between teams)
+const FREE_T1 = ["cat_flags", "cat_easy", "cat_word"];
+const FREE_T2 = ["cat_islamic", "cat_science", "cat_music"];
+const FREE_ALL = [...FREE_T1, ...FREE_T2];
 
-const DARK_BG = {
-  background: "radial-gradient(ellipse at top, #3D0810 0%, #1a0205 40%, #0f0102 100%)",
-  backgroundImage: `radial-gradient(ellipse at top, #3D0810 0%, #1a0205 40%, #0f0102 100%), url("data:image/svg+xml,%3Csvg width='80' height='80' viewBox='0 0 80 80' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23F1E194' fill-opacity='0.04'%3E%3Cpath d='M40 0L50 20L70 20L55 32L60 52L40 40L20 52L25 32L10 20L30 20Z'/%3E%3C/g%3E%3C/svg%3E")`,
-};
+const DARK_BG = { background: "radial-gradient(ellipse at top, #3D0810 0%, #1a0205 40%, #0f0102 100%)" };
 
 export default function CategorySelectPage() {
   const navigate = useNavigate();
-  const { session, updateSession } = useGame();
+  const { session, updateSession, currentUser } = useGame();
   const [categories, setCategories] = useState([]);
   const [team1Picks, setTeam1Picks] = useState([]);
   const [team2Picks, setTeam2Picks] = useState([]);
   const [currentTeam, setCurrentTeam] = useState(1);
   const [loading, setLoading] = useState(true);
 
+  const isFreeUser = !currentUser || currentUser.subscription_type !== "premium";
+
   useEffect(() => {
     if (!session) { navigate("/"); return; }
     axios.get(`${API}/categories`).then(({ data }) => {
       setCategories(data);
       setLoading(false);
+
+      // Free users: auto-assign fixed categories
+      if (isFreeUser) {
+        setTeam1Picks(FREE_T1);
+        setTeam2Picks(FREE_T2);
+      }
     });
-  }, [session, navigate]);
+  }, [session, navigate]); // eslint-disable-line
+
+  // Free users: auto-start game immediately after load
+  const startFreeGame = async () => {
+    await updateSession({
+      team1_categories: FREE_T1,
+      team2_categories: FREE_T2,
+      status: "playing",
+    });
+    navigate("/game");
+  };
 
   const handlePick = (catId) => {
     if (currentTeam === 1) {
       if (team1Picks.includes(catId)) {
-        setTeam1Picks(team1Picks.filter((c) => c !== catId));
+        setTeam1Picks(team1Picks.filter(c => c !== catId));
       } else if (team1Picks.length < 3) {
         const newPicks = [...team1Picks, catId];
         setTeam1Picks(newPicks);
-        if (newPicks.length === 3) {
-          toast.success(`${session.team1_name} اختار ${newPicks.length} فئات`);
-        }
+        if (newPicks.length === 3) toast.success(`✓ ${session.team1_name} اختار 3 فئات`);
       }
     } else {
+      const already1 = team1Picks.includes(catId);
       if (team2Picks.includes(catId)) {
-        setTeam2Picks(team2Picks.filter((c) => c !== catId));
-      } else if (team2Picks.length < 3) {
+        setTeam2Picks(team2Picks.filter(c => c !== catId));
+      } else if (team2Picks.length < 3 && !already1) {
         const newPicks = [...team2Picks, catId];
         setTeam2Picks(newPicks);
-        if (newPicks.length === 3) {
-          toast.success(`${session.team2_name} اختار ${newPicks.length} فئات`);
-        }
+        if (newPicks.length === 3) toast.success(`✓ ${session.team2_name} اختار 3 فئات`);
       }
     }
   };
@@ -63,34 +75,98 @@ export default function CategorySelectPage() {
       setCurrentTeam(2);
     } else {
       if (team2Picks.length < 3) { toast.error("اختر 3 فئات للفريق الثاني!"); return; }
-      await updateSession({
-        team1_categories: team1Picks,
-        team2_categories: team2Picks,
-        status: "playing",
-      });
+      await updateSession({ team1_categories: team1Picks, team2_categories: team2Picks, status: "playing" });
       navigate("/game");
     }
   };
 
   if (loading) return (
-    <div className="min-h-screen game-board-bg flex items-center justify-center">
-      <div className="text-secondary text-2xl">جاري التحميل...</div>
+    <div className="min-h-screen flex items-center justify-center" style={DARK_BG}>
+      <div className="text-secondary text-2xl animate-pulse">جاري التحميل...</div>
     </div>
   );
 
+  // ── FREE USER VIEW ──
+  if (isFreeUser) {
+    const freeCats = categories.filter(c => FREE_ALL.includes(c.id));
+    return (
+      <div className="min-h-screen px-4 py-8" style={DARK_BG}>
+        <div className="max-w-3xl mx-auto">
+          <div className="text-center mb-6 animate-fade-in-up">
+            <h1 className="text-3xl font-black text-secondary mb-2">الفئات المجانية</h1>
+            <div className="bg-secondary/10 border border-secondary/25 rounded-xl px-4 py-3 max-w-md mx-auto">
+              <p className="text-secondary/80 text-sm">
+                هذه الفئات الثابتة للحساب المجاني.
+                <button
+                  onClick={() => navigate("/pricing")}
+                  className="text-secondary font-bold underline mr-1 hover:no-underline"
+                >
+                  اشترك الحين
+                </button>
+                للوصول لجميع الفئات وأسئلة لا تتكرر.
+              </p>
+            </div>
+          </div>
+
+          {/* 6 locked categories */}
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
+            {freeCats.map((cat, i) => {
+              const isT1 = FREE_T1.includes(cat.id);
+              return (
+                <div
+                  key={cat.id}
+                  className="relative rounded-2xl overflow-hidden"
+                  style={{
+                    border: `2px solid ${isT1 ? "rgba(239,68,68,0.4)" : "rgba(59,130,246,0.4)"}`,
+                    animationDelay: `${0.05 * i}s`,
+                  }}
+                >
+                  {/* Image or color */}
+                  {cat.image_url ? (
+                    <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `url(${cat.image_url})` }} />
+                  ) : (
+                    <div className="absolute inset-0" style={{ background: `linear-gradient(135deg, ${cat.color || "#5B0E14"}, #0f0102)` }} />
+                  )}
+                  <div className="absolute inset-0 bg-black/50" />
+                  <div className="relative z-10 p-4 flex flex-col items-center text-center">
+                    <div className="text-secondary font-black text-base mb-1">{cat.name}</div>
+                    <div className={`text-xs font-bold ${isT1 ? "text-red-300" : "text-blue-300"}`}>
+                      {isT1 ? "🔴 " + session?.team1_name : "🔵 " + session?.team2_name}
+                    </div>
+                    <div className="mt-1.5 text-secondary/40 text-[10px]">🔒 ثابتة</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="flex justify-center">
+            <button
+              data-testid="start-free-game-btn"
+              onClick={startFreeGame}
+              className="bg-secondary text-primary px-12 py-4 rounded-full font-black text-xl hover:scale-105 transition-all"
+              style={{ boxShadow: "0 0 30px rgba(241,225,148,0.3)" }}
+            >
+              ابدأ اللعبة! 🎮
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── PREMIUM USER VIEW ──
   const picks = currentTeam === 1 ? team1Picks : team2Picks;
   const teamName = currentTeam === 1 ? session?.team1_name : session?.team2_name;
   const teamColor = currentTeam === 1 ? "🔴" : "🔵";
 
   return (
     <div className="min-h-screen px-4 py-8" style={DARK_BG}>
-      <div className="max-w-3xl mx-auto">
+      <div className="max-w-4xl mx-auto">
         {/* Header */}
-        <div className="text-center mb-8 animate-fade-in-up">
+        <div className="text-center mb-6 animate-fade-in-up">
           <div className="text-secondary/60 text-sm mb-2">الخطوة {currentTeam} من 2</div>
-          <h1 className="text-4xl font-black text-secondary">
-            {teamColor} {teamName}
-          </h1>
+          <h1 className="text-4xl font-black text-secondary">{teamColor} {teamName}</h1>
           <p className="text-secondary/70 text-lg mt-2">
             اختر <span className="text-secondary font-black text-xl">{3 - picks.length}</span> فئة
             {picks.length > 0 && ` (اخترت ${picks.length})`}
@@ -98,57 +174,69 @@ export default function CategorySelectPage() {
         </div>
 
         {/* Progress dots */}
-        <div className="flex justify-center gap-2 mb-8">
-          {[1, 2].map((t) => (
+        <div className="flex justify-center gap-2 mb-6">
+          {[1, 2].map(t => (
             <div key={t} className={`h-3 rounded-full transition-all duration-300 ${t === currentTeam ? "w-8 bg-secondary" : t < currentTeam ? "w-3 bg-secondary/60" : "w-3 bg-secondary/20"}`} />
           ))}
         </div>
 
-        {/* Team 1 done banner */}
+        {/* Team 1 summary */}
         {currentTeam === 2 && team1Picks.length > 0 && (
           <div className="bg-green-900/40 border border-green-500/30 rounded-xl p-3 mb-4 text-center">
             <span className="text-green-400 text-sm font-bold">
-              ✓ {session?.team1_name} اختار: {team1Picks.map(id => categories.find(c => c.id === id)?.name).join(" • ")}
+              ✓ {session?.team1_name}: {team1Picks.map(id => categories.find(c => c.id === id)?.name).join(" • ")}
             </span>
           </div>
         )}
 
-        {/* Category Grid */}
+        {/* Category Grid - with real images */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-8">
           {categories.map((cat, i) => {
             const isSelected = picks.includes(cat.id);
             const isOtherTeam = currentTeam === 2 && team1Picks.includes(cat.id);
+            const isDisabled = isOtherTeam && !picks.includes(cat.id);
 
             return (
               <button
                 key={cat.id}
                 data-testid={`category-${cat.id}`}
-                onClick={() => !isOtherTeam && handlePick(cat.id)}
-                disabled={isOtherTeam && !picks.includes(cat.id)}
+                onClick={() => !isDisabled && handlePick(cat.id)}
+                disabled={isDisabled}
                 className={`
-                  relative rounded-2xl p-4 text-center border-2 transition-all duration-300 flex flex-col items-center gap-2
+                  relative rounded-2xl overflow-hidden aspect-video flex flex-col justify-end
+                  border-2 transition-all duration-300
                   ${isSelected
-                    ? "bg-secondary text-primary border-secondary shadow-[0_0_20px_rgba(241,225,148,0.5)] scale-105"
-                    : isOtherTeam
-                    ? "bg-primary/20 border-primary/20 opacity-40 cursor-not-allowed"
-                    : "bg-primary/50 border-secondary/20 hover:border-secondary hover:scale-105 cursor-pointer text-secondary"}
+                    ? "border-secondary scale-105 shadow-[0_0_25px_rgba(241,225,148,0.5)]"
+                    : isDisabled
+                    ? "border-primary/10 opacity-30 cursor-not-allowed"
+                    : "border-secondary/20 hover:border-secondary hover:scale-105 cursor-pointer"}
                 `}
-                style={{ animationDelay: `${0.05 * i}s` }}
+                style={{ animationDelay: `${0.05 * i}s`, minHeight: "100px" }}
               >
+                {/* Background */}
+                {cat.image_url ? (
+                  <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `url(${cat.image_url})` }} />
+                ) : (
+                  <div className="absolute inset-0" style={{ background: `linear-gradient(135deg, ${cat.color || "#5B0E14"}, #0f0102)` }} />
+                )}
+                <div className={`absolute inset-0 transition-all ${isSelected ? "bg-secondary/40" : "bg-black/50 hover:bg-black/40"}`} />
+
+                {/* Selected check */}
                 {isSelected && (
-                  <div className="absolute top-2 left-2 bg-primary text-secondary rounded-full w-6 h-6 flex items-center justify-center text-xs font-black">
+                  <div className="absolute top-2 right-2 bg-secondary text-primary rounded-full w-7 h-7 flex items-center justify-center text-sm font-black z-10">
                     ✓
                   </div>
                 )}
-                <span className="text-4xl">{CATEGORY_ICONS[cat.id] || "🎯"}</span>
-                <span className={`font-bold text-sm leading-tight ${isSelected ? "text-primary" : "text-secondary"}`}>
-                  {cat.name}
-                </span>
-                {cat.is_special && (
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${isSelected ? "bg-primary/20 text-primary" : "bg-secondary/20 text-secondary/80"}`}>
-                    خاص
+
+                {/* Name */}
+                <div className="relative z-10 p-3 text-center">
+                  <span className={`font-black text-sm leading-tight drop-shadow-lg ${isSelected ? "text-primary" : "text-secondary"}`}>
+                    {cat.name}
                   </span>
-                )}
+                  {cat.is_special && (
+                    <span className="block text-[10px] text-secondary/70 mt-0.5">QR</span>
+                  )}
+                </div>
               </button>
             );
           })}
@@ -165,7 +253,7 @@ export default function CategorySelectPage() {
                 ? "bg-secondary text-primary hover:scale-105 hover:shadow-[0_0_30px_rgba(241,225,148,0.5)]"
                 : "bg-secondary/20 text-secondary/40 cursor-not-allowed"}`}
           >
-            {currentTeam === 1 ? "التالي →" : "ابدأ اللعبة! 🎮"}
+            {currentTeam === 1 ? "التالي ←" : "ابدأ اللعبة! 🎮"}
           </button>
         </div>
       </div>
