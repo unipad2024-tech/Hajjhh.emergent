@@ -255,14 +255,14 @@ export default function QuestionPage() {
 
       {/* Scores */}
       <div className="flex gap-8 mt-6 text-center">
-        <div className="text-secondary/50">
-          <div className="text-sm">{session?.team1_name}</div>
-          <div className="text-2xl font-black text-secondary">{session?.team1_score || 0}</div>
+        <div className="bg-primary/50 border border-secondary/20 rounded-xl px-4 py-2">
+          <div className="text-secondary/60 text-xs font-bold">{session?.team1_name}</div>
+          <div className="text-2xl font-black text-secondary">{session?.team1_score || 0} <span className="text-xs text-secondary/40">نقطة</span></div>
         </div>
-        <div className="text-secondary/30 flex items-center">VS</div>
-        <div className="text-secondary/50">
-          <div className="text-sm">{session?.team2_name}</div>
-          <div className="text-2xl font-black text-secondary">{session?.team2_score || 0}</div>
+        <div className="text-secondary/30 flex items-center font-black">VS</div>
+        <div className="bg-primary/50 border border-secondary/20 rounded-xl px-4 py-2">
+          <div className="text-secondary/60 text-xs font-bold">{session?.team2_name}</div>
+          <div className="text-2xl font-black text-secondary">{session?.team2_score || 0} <span className="text-xs text-secondary/40">نقطة</span></div>
         </div>
       </div>
     </div>
