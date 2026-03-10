@@ -1,0 +1,184 @@
+{
+  "identity": {
+    "persona": "E1 - The Anti-AI Designer",
+    "mission": "Create a modern, luxurious, and culturally rooted Saudi trivia experience that feels like a prime-time TV game show.",
+    "core_principles": [
+      "Fusion: Traditional Bedouin aesthetics x Modern TV Game Show tension.",
+      "Emotion: Every screen must build anticipation (Landing) or tension (Game Board).",
+      "Content is King: The Question is the hero. The Team is the star.",
+      "No 'Digital Flatness': Use texture, grain, and deep gradients to mimic physical game show sets."
+    ]
+  },
+  "design_system": {
+    "typography": {
+      "font_family_primary": "Cairo, sans-serif",
+      "font_family_secondary": "Tajawal, sans-serif",
+      "scale": {
+        "h1": "text-6xl md:text-8xl font-black tracking-tighter leading-none",
+        "h2": "text-4xl md:text-6xl font-bold tracking-tight",
+        "h3": "text-2xl md:text-4xl font-bold",
+        "body": "text-lg md:text-xl font-medium leading-relaxed",
+        "label": "text-sm font-bold tracking-widest uppercase"
+      },
+      "usage": {
+        "headings": "Cairo",
+        "body": "Cairo",
+        "numbers": "Cairo (ensure Arabic numerals capability)"
+      }
+    },
+    "colors": {
+      "palette": {
+        "primary": {
+          "DEFAULT": "#5B0E14",
+          "foreground": "#F1E194",
+          "dark": "#2A0409",
+          "light": "#7D1A22"
+        },
+        "secondary": {
+          "DEFAULT": "#F1E194",
+          "foreground": "#2A0409",
+          "dark": "#C5B358",
+          "light": "#F9F2C5"
+        },
+        "background": {
+          "DEFAULT": "#FDF6E3",
+          "cream": "#FAF3E0",
+          "dark": "#2A0409",
+          "overlay": "rgba(91, 14, 20, 0.95)"
+        },
+        "accent": {
+          "gold": "#F1E194",
+          "burgundy": "#5B0E14",
+          "success": "#10B981",
+          "error": "#EF4444"
+        },
+        "neutral": {
+          "100": "#FDF6E3",
+          "200": "#F1E194",
+          "800": "#5B0E14",
+          "900": "#2A0409"
+        }
+      },
+      "rules": [
+        "NEVER use pure white (#FFFFFF). Use #FDF6E3 or #FAF3E0.",
+        "Backgrounds should generally be Warm Beige (#FDF6E3) for light modes (Landing, Setup).",
+        "Game Board and Question screens MUST use Deep Burgundy (#5B0E14) or Dark (#2A0409) backgrounds to create 'Studio' atmosphere.",
+        "Text on Dark Backgrounds: Use Golden Sand (#F1E194) or Off-White (#FDF6E3).",
+        "Text on Light Backgrounds: Use Deep Burgundy (#5B0E14)."
+      ]
+    },
+    "spacing": {
+      "container_padding": "p-6 md:p-12 lg:p-24",
+      "section_gap": "gap-8 md:gap-16",
+      "grid_gap": "gap-4 md:gap-6"
+    },
+    "effects": {
+      "shadows": {
+        "card": "0 10px 30px -10px rgba(42, 4, 9, 0.3)",
+        "glow": "0 0 20px rgba(241, 225, 148, 0.4)",
+        "inner_glow": "inset 0 0 20px rgba(91, 14, 20, 0.5)"
+      },
+      "borders": {
+        "card": "1px solid rgba(241, 225, 148, 0.3)",
+        "active": "2px solid #F1E194"
+      },
+      "radius": {
+        "card": "rounded-2xl",
+        "button": "rounded-full",
+        "input": "rounded-xl"
+      }
+    }
+  },
+  "layout_strategies": {
+    "direction": "rtl",
+    "landing_page": {
+      "type": "Hero Centric",
+      "structure": "Central Hero Text (Game Title) with subtle animated background. 'Start Game' button is the primary focus. Team/Category previews below.",
+      "background_style": "Warm Beige with subtle Islamic geometric pattern overlay (5% opacity)."
+    },
+    "game_board": {
+      "type": "Bento Grid / Jeopardy Grid",
+      "structure": "Header with Scores. Grid of Categories (Columns) x Points (Rows).",
+      "visuals": "Dark Burgundy Background. Cards are 'Tiles' that flip or glow on hover. Used questions dim out.",
+      "typography": "Big, Bold Numbers for point values (200, 400, 600)."
+    },
+    "question_screen": {
+      "type": "Immersive Focus",
+      "structure": "Full screen overlay. Massive text. Timer distinct but not distracting.",
+      "animation": "Animate question text in. 'Reveal Answer' button hidden until needed or subtle.",
+      "background": "Deep Burgundy with radial gradient to focus center."
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-primary text-secondary font-bold px-8 py-4 rounded-full shadow-lg hover:scale-105 hover:shadow-glow transition-all duration-300 border-2 border-secondary",
+      "secondary": "bg-transparent text-primary border-2 border-primary px-6 py-3 rounded-full hover:bg-primary/10 transition-all",
+      "icon": "p-3 rounded-full hover:bg-black/5"
+    },
+    "cards": {
+      "category": "aspect-[3/4] bg-gradient-to-br from-primary to-primary-dark text-secondary flex flex-col items-center justify-center p-4 rounded-xl border border-secondary/20 hover:border-secondary transition-all shadow-card cursor-pointer group",
+      "question_tile": "aspect-video bg-card text-card-foreground flex items-center justify-center text-3xl font-black rounded-lg border-2 border-primary/10 hover:border-primary hover:bg-primary hover:text-secondary transition-all cursor-pointer shadow-sm relative overflow-hidden"
+    },
+    "inputs": {
+      "text": "bg-white/50 border-2 border-primary/20 focus:border-primary px-4 py-3 rounded-xl text-lg w-full text-right outline-none transition-all placeholder:text-primary/30"
+    },
+    "timer": {
+      "style": "Circular progress bar. Starts Gold, turns Red at 10s.",
+      "location": "Top center or floating top-right."
+    }
+  },
+  "assets": {
+    "images": {
+      "background_pattern": {
+        "url": "https://images.unsplash.com/photo-1635722784047-8c2c489df874?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxOTJ8MHwxfHNlYXJjaHwzfHxpc2xhbWljJTIwZ2VvbWV0cmljJTIwcGF0dGVybiUyMGdvbGQlMjB0ZXh0dXJlJTIwZGFya3xlbnwwfHx8fDE3NzMxMjA2MjF8MA&ixlib=rb-4.1.0&q=85",
+        "usage": "Use as a subtle overlay on backgrounds. Set opacity to 0.05 on Light bg, 0.1 on Dark bg. Use mix-blend-mode: overlay."
+      },
+      "hero_bg": {
+        "url": "https://images.unsplash.com/photo-1704104501140-476216730933?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMjV8MHwxfHNlYXJjaHwzfHxzYXVkaSUyMGFyYWJpYW4lMjBmcmllbmRzJTIwZ2F0aGVyaW5nJTIwbHV4dXJ5JTIwdHJhZGl0aW9uYWx8ZW58MHx8fHwxNzczMTIwNjIwfDA&ixlib=rb-4.1.0&q=85",
+        "usage": "Optional blurred background for landing page or 'Setup' screens."
+      },
+      "category_defaults": [
+        "https://images.unsplash.com/photo-1695411363641-4ab67eaf96da?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxOTJ8MHwxfHNlYXJjaHw0fHxpc2xhbWljJTIwZ2VvbWV0cmljJTIwcGF0dGVybiUyMGdvbGQlMjB0ZXh0dXJlJTIwZGFya3xlbnwwfHx8fDE3NzMxMjA2MjF8MA&ixlib=rb-4.1.0&q=85"
+      ]
+    },
+    "icons": {
+      "library": "lucide-react",
+      "style": "Stroke width 1.5 or 2. Color depends on background."
+    }
+  },
+  "animations": {
+    "page_transition": {
+      "initial": { "opacity": 0, "y": 20 },
+      "animate": { "opacity": 1, "y": 0 },
+      "exit": { "opacity": 0, "y": -20 },
+      "transition": { "duration": 0.4, "ease": "easeOut" }
+    },
+    "card_flip": {
+      "perspective": "1000px",
+      "style": "Rotate Y axis. Front face: Point Value. Back face: Category Icon/Name (or vice versa)."
+    },
+    "micro_interactions": {
+      "hover": "scale-105",
+      "tap": "scale-95"
+    }
+  },
+  "universal_guidelines": [
+    "RTL FIRST: Always ensure `dir='rtl'` is set on the html root or main container.",
+    "NO PURE WHITE: Use #FDF6E3 for 'white' backgrounds.",
+    "The Game Board must feel 'Physical'. Use shadows and borders to create depth.",
+    "Typography: Headings in Cairo (Bold/Black), Body in Cairo (Medium).",
+    "Data-Test-ID: All interactive elements MUST have `data-testid` attributes (e.g., `data-testid='start-game-btn'`).",
+    "Use 'sonner' for toasts.",
+    "Use Shadcn components but OVERRIDE the default styling to match the Burgundy/Gold theme."
+  ],
+  "instructions_to_main_agent": [
+    "1. Setup Tailwind config with the custom colors (primary: #5B0E14, secondary: #F1E194, background: #FDF6E3).",
+    "2. Install 'Cairo' font from Google Fonts and set as default sans font.",
+    "3. Ensure `dir='rtl'` is active.",
+    "4. Create the 'Game Board' using a CSS Grid (Bento style).",
+    "5. Use Framer Motion for the card reveal and page transitions.",
+    "6. Mock the data for Questions/Categories initially.",
+    "7. Implement the Timer logic on the Question page.",
+    "8. Ensure the 'Admin Panel' has a separate, cleaner, denser layout but keeps the color scheme."
+  ]
+}
