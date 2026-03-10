@@ -72,9 +72,10 @@ HUJJAH is a competitive team trivia social game for Saudi gatherings, now transf
 - 450 Questions seeded: 45 per category (15 per difficulty × 3 difficulties)
 - Short answers: "7" not "7 أيام"
 
-### Testing (Iteration 3 - 2026-03-10)
-- Backend: 100% (16/16 tests)
-- Frontend: 100% (12/12 features)
+### Testing (Iteration 4 - 2026-03-10 - v4 Major Update)
+- Backend: 100% (9/9 tests)
+- Frontend: 100% (11/11 features)
+- Fixed: 36-tile board, real images, free user lock, TV-style question, SAR pricing
 
 ## Environment Variables
 - Backend: MONGO_URL, DB_NAME, CORS_ORIGINS, JWT_SECRET_KEY, ADMIN_PASSWORD, STRIPE_API_KEY
@@ -95,6 +96,12 @@ HUJJAH is a competitive team trivia social game for Saudi gatherings, now transf
 - [x] Subscription tiers (free/premium)
 - [x] Admin users & analytics dashboard
 - [x] Stripe integration (mocked with test key)
+- [x] 36-tile board: 6 categories × 6 tiles (2 per difficulty: slot1/slot2)
+- [x] Real category images (Unsplash URLs)
+- [x] Free user: 6 fixed locked categories
+- [x] TV-style question screen (wide, full-height)
+- [x] SAR pricing: 19.99 SAR/month, 149.99 SAR/year
+- [x] Board fills full screen height/width
 
 ### P1 (High priority - next)
 - [ ] Generate 1000+ questions via AI (currently 450)

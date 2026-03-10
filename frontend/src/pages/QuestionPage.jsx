@@ -144,10 +144,10 @@ export default function QuestionPage() {
         </div>
       </div>
 
-      {/* ── Main Area: Timer + Question side by side on wide screens ── */}
-      <div className="flex-1 flex flex-col md:flex-row items-center gap-3 px-3 md:px-6 pb-3 overflow-hidden">
+      {/* ── Main Area: Timer at top, Question fills height ── */}
+      <div className="flex-1 flex flex-col items-center gap-2 px-3 md:px-6 pb-3 overflow-hidden">
 
-        {/* ── Timer (left on wide, top on mobile) ── */}
+        {/* ── Timer (always at top center) ── */}
         <div className="shrink-0 flex flex-col items-center">
           <svg width="110" height="110" viewBox="0 0 100 100">
             <circle cx="50" cy="50" r={R} fill="rgba(0,0,0,0.4)" stroke="rgba(241,225,148,0.08)" strokeWidth="9"/>
@@ -164,12 +164,11 @@ export default function QuestionPage() {
               {timeLeft}
             </text>
           </svg>
-          <div className="text-secondary/30 text-xs mt-1">ثانية</div>
         </div>
 
-        {/* ── Question Card ── */}
-        <div className="flex-1 w-full flex flex-col overflow-hidden">
-          <div className="flex-1 bg-primary/70 border-2 border-secondary/25 rounded-3xl p-4 md:p-8 lg:p-10 backdrop-blur-sm shadow-2xl flex flex-col overflow-hidden"
+        {/* ── Question Card (fills remaining height, full width) ── */}
+        <div className="flex-1 w-full overflow-hidden" style={{ maxWidth: "100%" }}>
+          <div className="h-full bg-primary/70 border-2 border-secondary/25 rounded-3xl p-4 md:p-8 lg:p-10 backdrop-blur-sm shadow-2xl flex flex-col"
             style={{ boxShadow: "0 0 60px rgba(0,0,0,0.6), inset 0 1px 0 rgba(241,225,148,0.1)" }}
           >
             {isSecret ? (
