@@ -8,6 +8,7 @@ const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 const CATEGORY_ICONS = {
   cat_flags: "🏳️", cat_easy: "💡", cat_saudi: "🇸🇦",
   cat_islamic: "☪️", cat_science: "🔬", cat_logos: "🏷️", cat_word: "🤫",
+  cat_culture: "🎬", cat_sports: "⚽", cat_music: "🎵",
 };
 
 const emptyQuestion = {
@@ -22,6 +23,8 @@ export default function AdminDashboard() {
 
   const [categories, setCategories] = useState([]);
   const [questions, setQuestions] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [analytics, setAnalytics] = useState(null);
   const [selectedCat, setSelectedCat] = useState(null);
   const [selectedDifficulty, setSelectedDifficulty] = useState("all");
   const [showForm, setShowForm] = useState(false);
@@ -41,7 +44,7 @@ export default function AdminDashboard() {
 
   const verifyToken = async () => {
     try {
-      await axios.get(`${API}/auth/verify`, { headers });
+      await axios.get(`${API}/admin/verify`, { headers });
       loadData();
     } catch {
       localStorage.removeItem("admin_token");
@@ -59,10 +62,29 @@ export default function AdminDashboard() {
     if (!selectedCat && catsRes.data.length > 0) setSelectedCat(catsRes.data[0].id);
   }, [selectedCat]);
 
+  const loadUsers = useCallback(async () => {
+    try {
+      const { data } = await axios.get(`${API}/admin/users`, { headers });
+      setUsers(data);
+    } catch { toast.error("خطأ في تحميل المستخدمين"); }
+  }, []);
+
+  const loadAnalytics = useCallback(async () => {
+    try {
+      const { data } = await axios.get(`${API}/admin/analytics`, { headers });
+      setAnalytics(data);
+    } catch { toast.error("خطأ في تحميل الإحصاءات"); }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === "users") loadUsers();
+    if (activeTab === "analytics") loadAnalytics();
+  }, [activeTab]);
+
   const handleSeed = async () => {
     setLoading(true);
     try {
-      const { data } = await axios.post(`${API}/seed`, {}, { headers });
+      const { data } = await axios.post(`${API}/seed?force=true`, {}, { headers });
       toast.success(data.message);
       loadData();
     } catch (e) {
@@ -129,6 +151,23 @@ export default function AdminDashboard() {
     toast.success("تم الحذف");
   };
 
+  const handleUpdateUserSub = async (userId, subType) => {
+    try {
+      await axios.put(`${API}/admin/users/${userId}`, { subscription_type: subType }, { headers });
+      toast.success("تم تحديث الاشتراك");
+      loadUsers();
+    } catch { toast.error("خطأ في التحديث"); }
+  };
+
+  const handleDeleteUser = async (userId) => {
+    if (!window.confirm("حذف المستخدم نهائياً؟")) return;
+    try {
+      await axios.delete(`${API}/admin/users/${userId}`, { headers });
+      toast.success("تم الحذف");
+      loadUsers();
+    } catch { toast.error("خطأ في الحذف"); }
+  };
+
   const filteredQuestions = questions.filter((q) => {
     const catMatch = selectedCat ? q.category_id === selectedCat : true;
     const diffMatch = selectedDifficulty === "all" ? true : q.difficulty === parseInt(selectedDifficulty);
@@ -152,7 +191,19 @@ export default function AdminDashboard() {
           <span className="text-secondary/50">|</span>
           <span className="text-secondary/80 font-bold">لوحة الإدارة</span>
         </div>
-        <div className="flex gap-3">
+        <div className="flex gap-3 items-center">
+          {/* Tabs */}
+          {["questions", "users", "analytics"].map((tab) => (
+            <button
+              key={tab}
+              data-testid={`tab-${tab}`}
+              onClick={() => setActiveTab(tab)}
+              className={`text-sm px-3 py-1 rounded-lg font-bold transition-all ${activeTab === tab ? "bg-secondary text-primary" : "text-secondary/60 hover:text-secondary"}`}
+            >
+              {tab === "questions" ? "الأسئلة" : tab === "users" ? "المستخدمون" : "الإحصاءات"}
+            </button>
+          ))}
+          <span className="text-secondary/20">|</span>
           <button
             data-testid="seed-btn"
             onClick={handleSeed}
@@ -165,145 +216,273 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      <div className="flex">
-        {/* Sidebar - Categories */}
-        <div className="w-56 bg-primary/5 border-l border-primary/10 min-h-screen p-4">
-          <div className="flex items-center justify-between mb-3">
-            <span className="font-black text-sm text-primary/60 uppercase tracking-widest">الفئات</span>
-            <button
-              data-testid="add-cat-btn"
-              onClick={() => setShowCatForm(true)}
-              className="text-primary bg-secondary/80 rounded-lg px-2 py-1 text-xs font-bold hover:bg-secondary transition-all"
-            >
-              + جديد
-            </button>
-          </div>
-          <div className="space-y-1">
-            {categories.map((cat) => (
-              <div
-                key={cat.id}
-                className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition-all ${selectedCat === cat.id ? "bg-primary text-secondary" : "hover:bg-primary/10"}`}
-                onClick={() => setSelectedCat(cat.id)}
+      {/* ── QUESTIONS TAB ── */}
+      {activeTab === "questions" && (
+        <div className="flex">
+          {/* Sidebar - Categories */}
+          <div className="w-56 bg-primary/5 border-l border-primary/10 min-h-screen p-4">
+            <div className="flex items-center justify-between mb-3">
+              <span className="font-black text-sm text-primary/60 uppercase tracking-widest">الفئات</span>
+              <button
+                data-testid="add-cat-btn"
+                onClick={() => setShowCatForm(true)}
+                className="text-primary bg-secondary/80 rounded-lg px-2 py-1 text-xs font-bold hover:bg-secondary transition-all"
               >
-                <div className="flex items-center gap-2">
-                  <span>{CATEGORY_ICONS[cat.id] || cat.icon || "🎯"}</span>
-                  <span className="text-sm font-bold truncate">{cat.name}</span>
-                </div>
-                <button
-                  onClick={(e) => { e.stopPropagation(); handleDeleteCat(cat.id); }}
-                  className="text-red-400/50 hover:text-red-400 text-xs"
+                + جديد
+              </button>
+            </div>
+            <div className="space-y-1">
+              {categories.map((cat) => (
+                <div
+                  key={cat.id}
+                  className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition-all ${selectedCat === cat.id ? "bg-primary text-secondary" : "hover:bg-primary/10"}`}
+                  onClick={() => setSelectedCat(cat.id)}
                 >
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
-
-          {/* Stats per category */}
-          {selectedCat && (
-            <div className="mt-4 bg-primary/5 rounded-xl p-3">
-              <div className="text-xs font-bold text-primary/50 mb-2">إحصاء الأسئلة</div>
-              {[200, 400, 600].map(d => (
-                <div key={d} className="flex justify-between items-center text-xs py-1">
-                  <span className="text-primary/60">{d} نقطة</span>
-                  <span className={`font-black ${getQuestionCount(selectedCat, d) >= 10 ? "text-green-600" : "text-amber-600"}`}>
-                    {getQuestionCount(selectedCat, d)}/10
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span>{cat.icon || CATEGORY_ICONS[cat.id] || "🎯"}</span>
+                    <span className="text-sm font-bold truncate">{cat.name}</span>
+                  </div>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleDeleteCat(cat.id); }}
+                    className="text-red-400/50 hover:text-red-400 text-xs"
+                  >
+                    ×
+                  </button>
                 </div>
               ))}
             </div>
-          )}
-        </div>
 
-        {/* Main Content */}
-        <div className="flex-1 p-6">
-          {/* Top Actions */}
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-4">
-              <h2 className="text-2xl font-black">
-                {selectedCat ? getCatName(selectedCat) : "كل الأسئلة"}
-              </h2>
-              <div className="flex gap-2">
-                {["all", "200", "400", "600"].map((d) => (
-                  <button
-                    key={d}
-                    data-testid={`filter-${d}`}
-                    onClick={() => setSelectedDifficulty(d)}
-                    className={`px-3 py-1 rounded-full text-sm font-bold transition-all ${selectedDifficulty === d ? "bg-primary text-secondary" : "bg-primary/10 hover:bg-primary/20"}`}
-                  >
-                    {d === "all" ? "الكل" : d}
-                  </button>
+            {/* Stats per category */}
+            {selectedCat && (
+              <div className="mt-4 bg-primary/5 rounded-xl p-3">
+                <div className="text-xs font-bold text-primary/50 mb-2">إحصاء الأسئلة</div>
+                {[200, 400, 600].map(d => (
+                  <div key={d} className="flex justify-between items-center text-xs py-1">
+                    <span className="text-primary/60">{d} نقطة</span>
+                    <span className={`font-black ${getQuestionCount(selectedCat, d) >= 10 ? "text-green-600" : "text-amber-600"}`}>
+                      {getQuestionCount(selectedCat, d)}
+                    </span>
+                  </div>
                 ))}
               </div>
-            </div>
-            <button
-              data-testid="add-question-btn"
-              onClick={() => {
-                setEditingQuestion(null);
-                setForm({ ...emptyQuestion, category_id: selectedCat || "" });
-                setShowForm(true);
-              }}
-              className="bg-primary text-secondary px-5 py-2 rounded-full font-bold hover:scale-105 transition-all"
-            >
-              + سؤال جديد
-            </button>
+            )}
           </div>
 
-          {/* Questions Table */}
-          <div className="space-y-2">
-            {filteredQuestions.length === 0 ? (
-              <div className="text-center py-16 text-primary/30">
-                <div className="text-5xl mb-3">📝</div>
-                <div className="text-xl font-bold">لا يوجد أسئلة</div>
-                <div className="text-sm mt-2">اضغط "+ سؤال جديد" لإضافة أسئلة</div>
+          {/* Main Content */}
+          <div className="flex-1 p-6">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-4">
+                <h2 className="text-2xl font-black">
+                  {selectedCat ? getCatName(selectedCat) : "كل الأسئلة"}
+                </h2>
+                <div className="flex gap-2">
+                  {["all", "200", "400", "600"].map((d) => (
+                    <button
+                      key={d}
+                      data-testid={`filter-${d}`}
+                      onClick={() => setSelectedDifficulty(d)}
+                      className={`px-3 py-1 rounded-full text-sm font-bold transition-all ${selectedDifficulty === d ? "bg-primary text-secondary" : "bg-primary/10 hover:bg-primary/20"}`}
+                    >
+                      {d === "all" ? "الكل" : d}
+                    </button>
+                  ))}
+                </div>
               </div>
-            ) : (
-              filteredQuestions.map((q) => (
-                <div
-                  key={q.id}
-                  data-testid={`question-row-${q.id}`}
-                  className="bg-white border border-primary/10 rounded-xl p-4 flex items-start gap-3 hover:border-primary/30 transition-all"
+              <div className="flex items-center gap-3">
+                <span className="text-primary/40 text-sm">{filteredQuestions.length} سؤال</span>
+                <button
+                  data-testid="add-question-btn"
+                  onClick={() => {
+                    setEditingQuestion(null);
+                    setForm({ ...emptyQuestion, category_id: selectedCat || "" });
+                    setShowForm(true);
+                  }}
+                  className="bg-primary text-secondary px-5 py-2 rounded-full font-bold hover:scale-105 transition-all"
                 >
-                  {q.image_url && (
-                    <img src={q.image_url} alt="" className="w-12 h-10 object-cover rounded-lg border border-primary/10 flex-shrink-0" onError={(e) => e.target.style.display = "none"} />
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${q.difficulty === 200 ? "bg-green-100 text-green-700" : q.difficulty === 400 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}`}>
-                        {q.difficulty}
-                      </span>
-                      <span className="text-xs text-primary/50">{getCatName(q.category_id)}</span>
-                      {q.question_type === "secret_word" && (
-                        <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">ولا كلمة</span>
-                      )}
+                  + سؤال جديد
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              {filteredQuestions.length === 0 ? (
+                <div className="text-center py-16 text-primary/30">
+                  <div className="text-5xl mb-3">📝</div>
+                  <div className="text-xl font-bold">لا يوجد أسئلة</div>
+                  <div className="text-sm mt-2">اضغط "+ سؤال جديد" لإضافة أسئلة</div>
+                </div>
+              ) : (
+                filteredQuestions.map((q) => (
+                  <div
+                    key={q.id}
+                    data-testid={`question-row-${q.id}`}
+                    className="bg-white border border-primary/10 rounded-xl p-4 flex items-start gap-3 hover:border-primary/30 transition-all"
+                  >
+                    {q.image_url && (
+                      <img src={q.image_url} alt="" className="w-12 h-10 object-cover rounded-lg border border-primary/10 flex-shrink-0" onError={(e) => e.target.style.display = "none"} />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${q.difficulty === 200 ? "bg-green-100 text-green-700" : q.difficulty === 400 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}`}>
+                          {q.difficulty}
+                        </span>
+                        <span className="text-xs text-primary/50">{getCatName(q.category_id)}</span>
+                        {q.question_type === "secret_word" && (
+                          <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">ولا كلمة</span>
+                        )}
+                      </div>
+                      <div className="font-bold text-primary truncate">{q.text}</div>
+                      <div className="text-primary/60 text-sm mt-1">
+                        الإجابة: <span className="font-medium text-primary">{q.answer}</span>
+                      </div>
                     </div>
-                    <div className="font-bold text-primary truncate">{q.text}</div>
-                    <div className="text-primary/60 text-sm mt-1">
-                      الإجابة: <span className="font-medium text-primary">{q.answer}</span>
+                    <div className="flex gap-2 flex-shrink-0">
+                      <button
+                        data-testid={`edit-q-${q.id}`}
+                        onClick={() => handleEditQuestion(q)}
+                        className="text-primary/50 hover:text-primary bg-primary/5 hover:bg-primary/10 px-3 py-1 rounded-lg text-sm font-bold transition-all"
+                      >
+                        تعديل
+                      </button>
+                      <button
+                        data-testid={`delete-q-${q.id}`}
+                        onClick={() => handleDeleteQuestion(q.id)}
+                        className="text-red-400/60 hover:text-red-500 bg-red-50 hover:bg-red-100 px-3 py-1 rounded-lg text-sm font-bold transition-all"
+                      >
+                        حذف
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── USERS TAB ── */}
+      {activeTab === "users" && (
+        <div className="p-6">
+          <h2 className="text-2xl font-black mb-6">المستخدمون ({users.length})</h2>
+          {users.length === 0 ? (
+            <div className="text-center py-16 text-primary/30">
+              <div className="text-5xl mb-3">👤</div>
+              <div className="text-xl font-bold">لا يوجد مستخدمون</div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {users.map((user) => (
+                <div key={user.id} data-testid={`user-row-${user.id}`} className="bg-white border border-primary/10 rounded-xl p-4 flex items-center gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <span className="font-black text-primary">{user.username}</span>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-black ${user.subscription_type === "premium" ? "bg-amber-100 text-amber-700" : "bg-gray-100 text-gray-500"}`}>
+                        {user.subscription_type === "premium" ? "مميز" : "مجاني"}
+                      </span>
+                    </div>
+                    <div className="text-primary/50 text-xs">{user.email}</div>
+                    <div className="text-primary/40 text-xs mt-0.5">
+                      مباريات: {user.game_count || 0} · أسئلة مجابة: {user.answered_count || 0}
                     </div>
                   </div>
                   <div className="flex gap-2 flex-shrink-0">
+                    {user.subscription_type !== "premium" ? (
+                      <button
+                        data-testid={`make-premium-${user.id}`}
+                        onClick={() => handleUpdateUserSub(user.id, "premium")}
+                        className="text-amber-600 bg-amber-50 hover:bg-amber-100 px-3 py-1 rounded-lg text-xs font-bold transition-all"
+                      >
+                        ترقية مميز
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleUpdateUserSub(user.id, "free")}
+                        className="text-gray-500 bg-gray-50 hover:bg-gray-100 px-3 py-1 rounded-lg text-xs font-bold transition-all"
+                      >
+                        إلغاء المميز
+                      </button>
+                    )}
                     <button
-                      data-testid={`edit-q-${q.id}`}
-                      onClick={() => handleEditQuestion(q)}
-                      className="text-primary/50 hover:text-primary bg-primary/5 hover:bg-primary/10 px-3 py-1 rounded-lg text-sm font-bold transition-all"
-                    >
-                      تعديل
-                    </button>
-                    <button
-                      data-testid={`delete-q-${q.id}`}
-                      onClick={() => handleDeleteQuestion(q.id)}
-                      className="text-red-400/60 hover:text-red-500 bg-red-50 hover:bg-red-100 px-3 py-1 rounded-lg text-sm font-bold transition-all"
+                      data-testid={`delete-user-${user.id}`}
+                      onClick={() => handleDeleteUser(user.id)}
+                      className="text-red-400/60 hover:text-red-500 bg-red-50 hover:bg-red-100 px-3 py-1 rounded-lg text-xs font-bold transition-all"
                     >
                       حذف
                     </button>
                   </div>
                 </div>
-              ))
-            )}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
-      </div>
+      )}
+
+      {/* ── ANALYTICS TAB ── */}
+      {activeTab === "analytics" && (
+        <div className="p-6">
+          <h2 className="text-2xl font-black mb-6">الإحصاءات</h2>
+          {!analytics ? (
+            <div className="text-center py-16 text-primary/30">جاري التحميل...</div>
+          ) : (
+            <div className="space-y-6">
+              {/* KPIs */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {[
+                  { label: "المستخدمون", value: analytics.users.total, sub: `${analytics.users.premium} مميز`, color: "bg-blue-50 border-blue-200" },
+                  { label: "المشتركون المميزون", value: analytics.users.premium, sub: `${analytics.users.free} مجاني`, color: "bg-amber-50 border-amber-200" },
+                  { label: "الأسئلة", value: analytics.questions.total, sub: "في قاعدة البيانات", color: "bg-green-50 border-green-200" },
+                  { label: "المباريات", value: analytics.sessions.total, sub: `${analytics.sessions.active_24h} اليوم`, color: "bg-purple-50 border-purple-200" },
+                ].map((kpi) => (
+                  <div key={kpi.label} className={`${kpi.color} border rounded-xl p-4`}>
+                    <div className="text-3xl font-black text-primary mb-1">{kpi.value}</div>
+                    <div className="text-sm font-bold text-primary/70">{kpi.label}</div>
+                    <div className="text-xs text-primary/40 mt-1">{kpi.sub}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Revenue */}
+              <div className="bg-white border border-primary/10 rounded-xl p-5">
+                <h3 className="font-black text-lg mb-3">الإيرادات</h3>
+                <div className="text-4xl font-black text-primary mb-1">${analytics.revenue.total}</div>
+                <div className="text-primary/50 text-sm">إجمالي الإيرادات ({analytics.revenue.currency})</div>
+                {analytics.revenue.recent_transactions?.length > 0 && (
+                  <div className="mt-4">
+                    <div className="text-xs font-bold text-primary/50 uppercase tracking-widest mb-2">آخر المعاملات</div>
+                    {analytics.revenue.recent_transactions.map((txn, i) => (
+                      <div key={i} className="flex justify-between items-center py-1.5 border-b border-primary/5 text-sm">
+                        <span className="text-primary/60">{txn.email}</span>
+                        <span className={`font-bold ${txn.payment_status === "paid" ? "text-green-600" : "text-amber-600"}`}>
+                          ${txn.amount}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Questions by category */}
+              <div className="bg-white border border-primary/10 rounded-xl p-5">
+                <h3 className="font-black text-lg mb-3">الأسئلة بالفئات</h3>
+                <div className="space-y-2">
+                  {analytics.questions.by_category.map((cat) => (
+                    <div key={cat.id} className="flex items-center gap-3">
+                      <span className="text-primary/70 text-sm w-32 truncate">{cat.name}</span>
+                      <div className="flex-1 bg-primary/10 rounded-full h-2 overflow-hidden">
+                        <div
+                          className="bg-primary h-full rounded-full"
+                          style={{ width: `${Math.min(100, (cat.count / 50) * 100)}%` }}
+                        />
+                      </div>
+                      <span className="text-xs font-black text-primary/60 w-8 text-left">{cat.count}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Question Form Modal */}
       {showForm && (

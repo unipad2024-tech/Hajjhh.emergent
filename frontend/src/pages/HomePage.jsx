@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
+import { useGame } from "@/context/GameContext";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -12,17 +13,23 @@ const CAT_META = {
   cat_science: { icon:"🔬", color:"#4c1d95" },
   cat_logos:   { icon:"🏷️", color:"#7c2d12" },
   cat_word:    { icon:"🤫", color:"#4a044e" },
+  cat_culture: { icon:"🎬", color:"#831843" },
+  cat_sports:  { icon:"⚽", color:"#134e4a" },
+  cat_music:   { icon:"🎵", color:"#1e3a5f" },
 };
 
 const DARK_BG = { background: "radial-gradient(ellipse at top, #3D0810 0%, #1a0205 40%, #0f0102 100%)" };
 
 export default function HomePage() {
   const navigate = useNavigate();
+  const { currentUser, logoutUser } = useGame();
   const [categories, setCategories] = useState([]);
 
   useEffect(() => {
     axios.get(`${API}/categories`).then(({ data }) => setCategories(data)).catch(() => {});
   }, []);
+
+  const isPremium = currentUser?.subscription_type === "premium";
 
   return (
     <div className="min-h-screen overflow-hidden" style={{...DARK_BG, minHeight:"100svh"}}>
@@ -31,6 +38,57 @@ export default function HomePage() {
       <div className="pointer-events-none fixed inset-0 overflow-hidden">
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[600px] h-[400px] bg-secondary/5 blur-3xl rounded-full"/>
         <div className="absolute bottom-1/4 right-1/4 w-64 h-64 bg-secondary/4 blur-3xl rounded-full"/>
+      </div>
+
+      {/* ── User Bar ── */}
+      <div className="relative z-20 flex items-center justify-between px-4 py-3 border-b border-secondary/10">
+        {currentUser ? (
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <span className="text-secondary/80 text-sm font-bold">{currentUser.username}</span>
+              {isPremium ? (
+                <span className="text-[10px] bg-secondary text-primary px-2 py-0.5 rounded-full font-black">مميز</span>
+              ) : (
+                <button
+                  data-testid="upgrade-btn"
+                  onClick={() => navigate("/pricing")}
+                  className="text-[10px] border border-secondary/40 text-secondary/70 px-2 py-0.5 rounded-full hover:border-secondary hover:text-secondary transition-all"
+                >
+                  ترقية
+                </button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <button
+              data-testid="login-nav-btn"
+              onClick={() => navigate("/login")}
+              className="text-secondary/70 hover:text-secondary text-sm font-bold transition-colors"
+            >
+              دخول
+            </button>
+            <span className="text-secondary/20">|</span>
+            <button
+              data-testid="signup-nav-btn"
+              onClick={() => navigate("/signup")}
+              className="text-secondary/70 hover:text-secondary text-sm font-bold transition-colors"
+            >
+              حساب جديد
+            </button>
+          </div>
+        )}
+        <div className="flex items-center gap-3">
+          {currentUser && (
+            <button
+              data-testid="logout-btn"
+              onClick={logoutUser}
+              className="text-secondary/30 hover:text-secondary/60 text-xs transition-colors"
+            >
+              خروج
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="relative z-10 flex flex-col items-center justify-start min-h-screen px-4 py-8 md:py-12">
@@ -51,6 +109,25 @@ export default function HomePage() {
             لعبة فريق تريفيا الاجتماعية
           </p>
         </div>
+
+        {/* ── Subscription Notice for Free Users ── */}
+        {currentUser && !isPremium && (
+          <div
+            className="bg-secondary/10 border border-secondary/25 rounded-xl px-5 py-3 max-w-md w-full text-center mb-4 animate-fade-in-up"
+            style={{ animationDelay: "0.05s" }}
+          >
+            <p className="text-secondary/80 text-sm">
+              أسئلتك قد تتكرر —{" "}
+              <button
+                data-testid="pricing-inline-btn"
+                onClick={() => navigate("/pricing")}
+                className="text-secondary font-bold underline hover:no-underline"
+              >
+                اشترك للحصول على أسئلة لا تتكرر
+              </button>
+            </p>
+          </div>
+        )}
 
         {/* ── Tagline ── */}
         <div
@@ -100,7 +177,7 @@ export default function HomePage() {
         {categories.length > 0 && (
           <div className="w-full max-w-3xl animate-fade-in-up" style={{animationDelay:"0.4s"}}>
             <h2 className="text-secondary/70 text-center text-sm font-bold uppercase tracking-widest mb-3">الفئات</h2>
-            <div className="grid grid-cols-4 md:grid-cols-7 gap-2 md:gap-3">
+            <div className="grid grid-cols-5 md:grid-cols-10 gap-2 md:gap-3">
               {categories.map((cat, i) => {
                 const m = CAT_META[cat.id] || { icon:"🎯", color:"#5B0E14" };
                 return (
@@ -112,11 +189,8 @@ export default function HomePage() {
                       animationDelay:`${0.05*i}s`,
                     }}
                   >
-                    <div className="text-2xl md:text-3xl mb-1">{m.icon}</div>
-                    <div className="text-secondary text-[10px] md:text-xs font-bold leading-tight">{cat.name}</div>
-                    {cat.is_special && (
-                      <div className="mt-1 text-secondary/70 text-[9px] bg-secondary/10 rounded px-1">QR</div>
-                    )}
+                    <div className="text-2xl md:text-3xl mb-1">{cat.icon || m.icon}</div>
+                    <div className="text-secondary text-[9px] md:text-[10px] font-bold leading-tight">{cat.name}</div>
                   </div>
                 );
               })}
@@ -124,14 +198,23 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* ── Admin ── */}
-        <button
-          data-testid="admin-link"
-          onClick={() => navigate("/admin")}
-          className="mt-10 text-secondary/20 text-xs hover:text-secondary/50 transition-colors"
-        >
-          لوحة الإدارة
-        </button>
+        {/* ── Footer Links ── */}
+        <div className="mt-10 flex items-center gap-4">
+          <button
+            data-testid="admin-link"
+            onClick={() => navigate("/admin")}
+            className="text-secondary/20 text-xs hover:text-secondary/50 transition-colors"
+          >
+            لوحة الإدارة
+          </button>
+          <span className="text-secondary/10">·</span>
+          <button
+            onClick={() => navigate("/pricing")}
+            className="text-secondary/20 text-xs hover:text-secondary/50 transition-colors"
+          >
+            الأسعار
+          </button>
+        </div>
       </div>
     </div>
   );

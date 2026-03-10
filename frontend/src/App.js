@@ -5,6 +5,10 @@ import { GameProvider } from "@/context/GameContext";
 import { Toaster } from "sonner";
 
 import HomePage from "@/pages/HomePage";
+import LoginPage from "@/pages/LoginPage";
+import SignupPage from "@/pages/SignupPage";
+import PricingPage from "@/pages/PricingPage";
+import PaymentSuccessPage from "@/pages/PaymentSuccessPage";
 import TeamSetupPage from "@/pages/TeamSetupPage";
 import CategorySelectPage from "@/pages/CategorySelectPage";
 import GameBoardPage from "@/pages/GameBoardPage";
@@ -20,6 +24,10 @@ function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/" element={<HomePage />} />
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/signup" element={<SignupPage />} />
+            <Route path="/pricing" element={<PricingPage />} />
+            <Route path="/payment/success" element={<PaymentSuccessPage />} />
             <Route path="/setup" element={<TeamSetupPage />} />
             <Route path="/categories" element={<CategorySelectPage />} />
             <Route path="/game" element={<GameBoardPage />} />

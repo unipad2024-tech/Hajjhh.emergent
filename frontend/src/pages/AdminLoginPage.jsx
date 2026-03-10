@@ -16,7 +16,7 @@ export default function AdminLoginPage() {
     if (!password.trim()) { toast.error("أدخل كلمة المرور"); return; }
     setLoading(true);
     try {
-      const { data } = await axios.post(`${API}/auth/login`, { password });
+      const { data } = await axios.post(`${API}/admin/login`, { password });
       localStorage.setItem("admin_token", data.token);
       toast.success("تم الدخول بنجاح!");
       navigate("/admin/dashboard");
