@@ -11,6 +11,11 @@ const CATEGORY_ICONS = {
   cat_islamic: "☪️", cat_science: "🔬", cat_logos: "🏷️", cat_word: "🤫",
 };
 
+const DARK_BG = {
+  background: "radial-gradient(ellipse at top, #3D0810 0%, #1a0205 40%, #0f0102 100%)",
+  backgroundImage: `radial-gradient(ellipse at top, #3D0810 0%, #1a0205 40%, #0f0102 100%), url("data:image/svg+xml,%3Csvg width='80' height='80' viewBox='0 0 80 80' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23F1E194' fill-opacity='0.04'%3E%3Cpath d='M40 0L50 20L70 20L55 32L60 52L40 40L20 52L25 32L10 20L30 20Z'/%3E%3C/g%3E%3C/svg%3E")`,
+};
+
 export default function CategorySelectPage() {
   const navigate = useNavigate();
   const { session, updateSession } = useGame();
@@ -78,7 +83,7 @@ export default function CategorySelectPage() {
   const teamColor = currentTeam === 1 ? "🔴" : "🔵";
 
   return (
-    <div className="min-h-screen game-board-bg pattern-overlay px-4 py-8">
+    <div className="min-h-screen px-4 py-8" style={DARK_BG}>
       <div className="max-w-3xl mx-auto">
         {/* Header */}
         <div className="text-center mb-8 animate-fade-in-up">

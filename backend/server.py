@@ -279,10 +279,13 @@ async def get_secret_word(question_id: str):
 # ─── Seed ─────────────────────────────────────────────────────────────────────
 
 @api_router.post("/seed")
-async def seed_data(_: bool = Depends(get_admin)):
+async def seed_data(force: bool = False, _: bool = Depends(get_admin)):
     existing = await db.categories.count_documents({})
-    if existing > 0:
+    if existing > 0 and not force:
         return {"message": "البيانات موجودة مسبقاً"}
+    if force:
+        await db.categories.delete_many({})
+        await db.questions.delete_many({})
 
     categories = [
         {"id": "cat_flags", "name": "اعلام دول", "icon": "🏳️", "image_url": "", "is_special": False, "color": "#1a6b3c", "order": 1, "description": "خمّن علم الدولة!", "created_at": datetime.now(timezone.utc).isoformat()},
