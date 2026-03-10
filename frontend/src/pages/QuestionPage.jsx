@@ -81,7 +81,7 @@ export default function QuestionPage() {
 
   const handleAssign = async (team) => {
     if (assigned) return;
-    const pts = question?.difficulty || 200;
+    const pts = question?.difficulty || 300;
     await updateScore(team, pts);
     setScoredTeam(team);
     setAssigned(true);
@@ -126,7 +126,7 @@ export default function QuestionPage() {
           <span className="text-secondary/30 text-xs">|</span>
           <span
             className="text-sm font-black"
-            style={{ color: question.difficulty === 200 ? "#6ee7b7" : question.difficulty === 400 ? "#fcd34d" : "#f87171" }}
+            style={{ color: question.difficulty === 300 ? "#6ee7b7" : question.difficulty === 600 ? "#fcd34d" : "#f87171" }}
           >
             {question.difficulty} نقطة
           </span>

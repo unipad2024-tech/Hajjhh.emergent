@@ -106,7 +106,6 @@ export default function HomePage() {
             حُجّة
           </h1>
           <p className="text-secondary/60 font-medium mt-1 text-base md:text-lg tracking-wide">
-            لعبة فريق تريفيا الاجتماعية
           </p>
         </div>
 

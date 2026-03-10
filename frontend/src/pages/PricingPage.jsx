@@ -11,7 +11,7 @@ const PLANS = [
   {
     id: "monthly",
     name: "المميز الشهري",
-    price: "19.99 ريال",
+    price: "29.99 ريال",
     period: "/ شهرياً",
     color: "#F1E194",
     features: [
@@ -24,9 +24,9 @@ const PLANS = [
   {
     id: "annual",
     name: "المميز السنوي",
-    price: "149.99 ريال",
+    price: "239.99 ريال",
     period: "/ سنوياً",
-    badge: "وفّر 37%",
+    badge: "وفّر 33%",
     color: "#F1E194",
     features: [
       "كل مميزات الخطة الشهرية",

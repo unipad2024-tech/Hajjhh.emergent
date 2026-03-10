@@ -12,7 +12,7 @@ const CATEGORY_ICONS = {
 };
 
 const emptyQuestion = {
-  category_id: "", difficulty: 200, text: "", answer: "",
+  category_id: "", difficulty: 300, text: "", answer: "",
   image_url: "", answer_image_url: "", question_type: "text",
 };
 
@@ -256,7 +256,7 @@ export default function AdminDashboard() {
             {selectedCat && (
               <div className="mt-4 bg-primary/5 rounded-xl p-3">
                 <div className="text-xs font-bold text-primary/50 mb-2">إحصاء الأسئلة</div>
-                {[200, 400, 600].map(d => (
+                {[300, 600, 900].map(d => (
                   <div key={d} className="flex justify-between items-center text-xs py-1">
                     <span className="text-primary/60">{d} نقطة</span>
                     <span className={`font-black ${getQuestionCount(selectedCat, d) >= 10 ? "text-green-600" : "text-amber-600"}`}>
@@ -276,7 +276,7 @@ export default function AdminDashboard() {
                   {selectedCat ? getCatName(selectedCat) : "كل الأسئلة"}
                 </h2>
                 <div className="flex gap-2">
-                  {["all", "200", "400", "600"].map((d) => (
+                  {["all", "300", "600", "900"].map((d) => (
                     <button
                       key={d}
                       data-testid={`filter-${d}`}
@@ -323,7 +323,7 @@ export default function AdminDashboard() {
                     )}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1 flex-wrap">
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${q.difficulty === 200 ? "bg-green-100 text-green-700" : q.difficulty === 400 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}`}>
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${q.difficulty === 300 ? "bg-green-100 text-green-700" : q.difficulty === 600 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}`}>
                           {q.difficulty}
                         </span>
                         <span className="text-xs text-primary/50">{getCatName(q.category_id)}</span>
@@ -514,9 +514,9 @@ export default function AdminDashboard() {
                     onChange={(e) => setForm({ ...form, difficulty: parseInt(e.target.value) })}
                     className="w-full border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none bg-white"
                   >
-                    <option value={200}>200 - سهل</option>
-                    <option value={400}>400 - متوسط</option>
-                    <option value={600}>600 - صعب</option>
+                    <option value={300}>300 - سهل</option>
+                    <option value={600}>600 - متوسط</option>
+                    <option value={900}>900 - صعب</option>
                   </select>
                 </div>
               </div>
