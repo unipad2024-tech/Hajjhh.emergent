@@ -175,10 +175,10 @@ export default function GameBoardPage() {
           data-testid="team1-score"
           className="flex flex-col items-center bg-gradient-to-br from-red-900/60 to-red-950/80 border-2 border-red-500/30 rounded-2xl px-3 md:px-6 py-2 md:py-3 min-w-[90px] md:min-w-[140px] shadow-lg"
         >
-          <div className="text-red-300 text-xs font-black uppercase tracking-widest mb-0.5 truncate max-w-[110px]">
+          <div className="text-red-300 text-xs font-black mb-0.5 truncate max-w-[110px]">
             🔴 {session?.team1_name}
           </div>
-          <div className="text-secondary text-3xl md:text-4xl font-black leading-none">
+          <div className="text-secondary text-3xl md:text-4xl font-black leading-none mt-1">
             <ScoreCounter value={scores.team1} />
           </div>
         </div>
@@ -205,10 +205,10 @@ export default function GameBoardPage() {
           data-testid="team2-score"
           className="flex flex-col items-center bg-gradient-to-br from-blue-900/60 to-blue-950/80 border-2 border-blue-500/30 rounded-2xl px-3 md:px-6 py-2 md:py-3 min-w-[90px] md:min-w-[140px] shadow-lg"
         >
-          <div className="text-blue-300 text-xs font-black uppercase tracking-widest mb-0.5 truncate max-w-[110px]">
+          <div className="text-blue-300 text-xs font-black mb-0.5 truncate max-w-[110px]">
             🔵 {session?.team2_name}
           </div>
-          <div className="text-secondary text-3xl md:text-4xl font-black leading-none">
+          <div className="text-secondary text-3xl md:text-4xl font-black leading-none mt-1">
             <ScoreCounter value={scores.team2} />
           </div>
         </div>

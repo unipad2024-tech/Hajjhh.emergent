@@ -30,29 +30,31 @@ HUJJAH is a competitive team trivia social game website for Saudi Arabian gather
 ## What's Been Implemented
 
 ### Backend (FastAPI) - Completed 2026-03-10
-- **Auth**: JWT-based admin login (password: hujjah2024 via env)
-- **Categories API**: CRUD for 7 default categories
-- **Questions API**: CRUD with category/difficulty filtering (210 seeded questions)
-- **Game Session API**: Create, read, update sessions
-- **Question Fetch**: Random unused question for category+difficulty
-- **Score Update**: Real-time score tracking per team
-- **Secret Word API**: GET /api/secret/{question_id} for QR mobile reveal
-- **Seed Endpoint**: POST /api/seed seeds all 210 questions
+- Auth: JWT admin login (ADMIN_PASSWORD env var, default hujjah2024)
+- Categories API: CRUD (7 default categories seeded)
+- Questions API: CRUD with category/difficulty filter (210 questions seeded, short answers)
+- Game Session API: Create/read/update, random unused question per tile, score update
+- Secret Word API: GET /api/secret/{question_id} for QR mobile reveal
+- Seed Endpoint: POST /api/seed with force=true for re-seeding
 
-### Frontend (React) - Completed 2026-03-10
-- **HomePage**: Welcoming landing with title, categories preview, instructions
-- **TeamSetupPage**: Enter team names (Team 1 & Team 2)
-- **CategorySelectPage**: Each team picks 3 categories (with visual selection state)
-- **GameBoardPage**: Jeopardy grid (6 cats × 3 difficulties = 18 tiles), real-time scores
-- **QuestionPage**: Full-screen question, 75s timer, answer reveal, point assignment, QR for secret words
-- **SecretWordPage**: Mobile QR scan page showing secret word
-- **AdminLoginPage**: Password-protected admin entry
-- **AdminDashboard**: Full CRUD for questions & categories with filtering
+### Frontend (React RTL) - Completed 2026-03-10
+- HomePage: Dark game-show background, large حُجّة title, categories preview, animated CTA
+- TeamSetupPage: Enter team names, VS divider, form validation
+- CategorySelectPage: Team 1 then Team 2 each pick 3 categories (disabled if Team 1 picked)
+- GameBoardPage: Dark Jeopardy grid, animated ScoreCounter, confetti on win, winner modal, force-end game
+- QuestionPage: 75s timer SVG ring, tension sound at 10s, buzz on 0s, answer reveal with animation, team point buttons (red/blue), correct sound, QR code for secret word category
+- SecretWordPage: Mobile QR scan page showing secret word in large gold text
+- AdminLoginPage: Password-protected entry
+- AdminDashboard: Full CRUD questions & categories, question count stats per category
 
 ### Data
-- 7 Categories: اعلام دول, معلومات سهلة, السعودية, اسلامي, علوم بسيطة, شعارات, ولا كلمة
-- 210 Questions: 10 per difficulty per category (30 per category × 7 = 210)
-- Flag images from flagcdn.com (automatic in seed)
+- 210 Questions seeded: 10 per difficulty (200/400/600) per category × 7 = 210
+- Short answers: "7" not "7 أيام", "الرياض" not "الرياض العاصمة"
+- Flag images from flagcdn.com (auto in seed)
+
+### Testing (Iteration 2 - 2026-03-10)
+- Backend: 100% (22/22 tests)
+- Frontend: 100% all flows
 
 ## P0/P1/P2 Backlog
 
