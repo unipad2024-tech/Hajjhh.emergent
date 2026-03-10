@@ -1,16 +1,17 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
-import os
-import logging
+import os, logging, uuid, random
 from pathlib import Path
-from pydantic import BaseModel, Field
-from typing import List, Optional
-import uuid
+from pydantic import BaseModel, EmailStr, Field
+from typing import List, Optional, Dict
 from datetime import datetime, timezone, timedelta
 from jose import jwt, JWTError
-import random
+from passlib.context import CryptContext
+from emergentintegrations.payments.stripe.checkout import (
+    StripeCheckout, CheckoutSessionRequest, CheckoutSessionResponse, CheckoutStatusResponse
+)
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -22,17 +23,44 @@ db = client[os.environ['DB_NAME']]
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
 
-SECRET_KEY = os.environ.get('JWT_SECRET_KEY', 'hujjah_secret_key_2024')
-ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'hujjah2024')
-ALGORITHM = "HS256"
+SECRET_KEY      = os.environ.get('JWT_SECRET_KEY', 'hujjah_secret_2024')
+ADMIN_PASSWORD  = os.environ.get('ADMIN_PASSWORD', 'hujjah2024')
+STRIPE_API_KEY  = os.environ.get('STRIPE_API_KEY', '')
+ALGORITHM       = "HS256"
 
+pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ─── Models ───────────────────────────────────────────────────────────────────
+# ─── Subscription Plans (server-side only – never from frontend) ────────────
+SUBSCRIPTION_PLANS = {
+    "monthly": {"name": "Premium شهري",   "amount": 9.99,  "currency": "usd", "days": 30},
+    "annual":  {"name": "Premium سنوي",   "amount": 79.99, "currency": "usd", "days": 365},
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MODELS
+# ══════════════════════════════════════════════════════════════════════════════
+
+class UserCreate(BaseModel):
+    email: str
+    username: str
+    password: str
+
+class UserLogin(BaseModel):
+    email: str
+    password: str
+
+class UserUpdate(BaseModel):
+    username: Optional[str] = None
+    password: Optional[str] = None
 
 class AdminLogin(BaseModel):
     password: str
+
+class AdminUserUpdate(BaseModel):
+    subscription_type: str
+    subscription_expires_at: Optional[str] = None
 
 class Category(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -57,12 +85,12 @@ class CategoryCreate(BaseModel):
 class Question(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     category_id: str
-    difficulty: int  # 200, 400, 600
+    difficulty: int
     text: str
     answer: str
     image_url: str = ""
     answer_image_url: str = ""
-    question_type: str = "text"  # "text" or "secret_word"
+    question_type: str = "text"
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 class QuestionCreate(BaseModel):
@@ -74,22 +102,10 @@ class QuestionCreate(BaseModel):
     answer_image_url: str = ""
     question_type: str = "text"
 
-class GameSession(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    team1_name: str
-    team2_name: str
-    team1_score: int = 0
-    team2_score: int = 0
-    team1_categories: List[str] = []
-    team2_categories: List[str] = []
-    used_questions: List[str] = []
-    status: str = "setup"
-    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    updated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-
 class GameSessionCreate(BaseModel):
     team1_name: str
     team2_name: str
+    user_id: Optional[str] = None
 
 class GameSessionUpdate(BaseModel):
     team1_name: Optional[str] = None
@@ -102,58 +118,242 @@ class GameSessionUpdate(BaseModel):
     status: Optional[str] = None
 
 class ScoreUpdate(BaseModel):
-    team: int  # 1 or 2
+    team: int
     points: int
+    question_id: Optional[str] = None
 
-# ─── Auth ──────────────────────────────────────────────────────────────────────
+class CheckoutCreate(BaseModel):
+    plan_id: str
+    origin_url: str
 
-def create_token():
-    payload = {"sub": "admin", "exp": datetime.now(timezone.utc) + timedelta(hours=24)}
-    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+class MarkAnswered(BaseModel):
+    question_id: str
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AUTH HELPERS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def hash_pw(pw: str) -> str:
+    return pwd_ctx.hash(pw)
+
+def verify_pw(pw: str, hashed: str) -> bool:
+    return pwd_ctx.verify(pw, hashed)
+
+def create_token(payload: dict, expires_hours: int = 24) -> str:
+    p = {**payload, "exp": datetime.now(timezone.utc) + timedelta(hours=expires_hours)}
+    return jwt.encode(p, SECRET_KEY, algorithm=ALGORITHM)
 
 async def get_admin(authorization: Optional[str] = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="غير مصرح")
-    token = authorization.split(" ")[1]
+        raise HTTPException(401, "غير مصرح")
     try:
-        jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        data = jwt.decode(authorization.split(" ")[1], SECRET_KEY, algorithms=[ALGORITHM])
+        if data.get("role") != "admin":
+            raise HTTPException(403, "غير مصرح")
         return True
     except JWTError:
-        raise HTTPException(status_code=401, detail="جلسة منتهية")
+        raise HTTPException(401, "جلسة منتهية")
+
+async def get_current_user(authorization: Optional[str] = Header(None)) -> Optional[dict]:
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    try:
+        data = jwt.decode(authorization.split(" ")[1], SECRET_KEY, algorithms=[ALGORITHM])
+        if data.get("role") != "user":
+            return None
+        user = await db.users.find_one({"id": data["sub"]}, {"_id": 0})
+        return user
+    except JWTError:
+        return None
+
+async def require_user(authorization: Optional[str] = Header(None)) -> dict:
+    user = await get_current_user(authorization)
+    if not user:
+        raise HTTPException(401, "يجب تسجيل الدخول أولاً")
+    return user
+
+# ══════════════════════════════════════════════════════════════════════════════
+# USER AUTH ROUTES
+# ══════════════════════════════════════════════════════════════════════════════
+
+@api_router.post("/auth/register")
+async def register(body: UserCreate):
+    if len(body.password) < 6:
+        raise HTTPException(400, "كلمة المرور يجب أن تكون 6 أحرف على الأقل")
+    existing = await db.users.find_one({"email": body.email.lower()})
+    if existing:
+        raise HTTPException(409, "البريد الإلكتروني مسجل مسبقاً")
+    existing_u = await db.users.find_one({"username": body.username})
+    if existing_u:
+        raise HTTPException(409, "اسم المستخدم محجوز")
+    user = {
+        "id": str(uuid.uuid4()),
+        "email": body.email.lower().strip(),
+        "username": body.username.strip(),
+        "password_hash": hash_pw(body.password),
+        "subscription_type": "free",
+        "subscription_expires_at": None,
+        "answered_question_ids": [],
+        "game_count": 0,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "last_active": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.users.insert_one(user)
+    token = create_token({"sub": user["id"], "role": "user", "email": user["email"]})
+    safe = {k: v for k, v in user.items() if k not in ("_id", "password_hash", "answered_question_ids")}
+    return {"token": token, "user": safe}
 
 @api_router.post("/auth/login")
+async def login(body: UserLogin):
+    user = await db.users.find_one({"email": body.email.lower()})
+    if not user or not verify_pw(body.password, user.get("password_hash", "")):
+        raise HTTPException(401, "البريد أو كلمة المرور غلط")
+    await db.users.update_one({"id": user["id"]}, {"$set": {"last_active": datetime.now(timezone.utc).isoformat()}})
+    token = create_token({"sub": user["id"], "role": "user", "email": user["email"]})
+    safe = {k: v for k, v in user.items() if k not in ("_id", "password_hash", "answered_question_ids")}
+    return {"token": token, "user": safe}
+
+@api_router.get("/auth/me")
+async def get_me(user: dict = Depends(require_user)):
+    safe = {k: v for k, v in user.items() if k not in ("_id", "password_hash", "answered_question_ids")}
+    safe["answered_count"] = len(user.get("answered_question_ids", []))
+    return safe
+
+@api_router.put("/auth/me")
+async def update_me(body: UserUpdate, user: dict = Depends(require_user)):
+    updates = {}
+    if body.username:
+        ex = await db.users.find_one({"username": body.username, "id": {"$ne": user["id"]}})
+        if ex:
+            raise HTTPException(409, "اسم المستخدم محجوز")
+        updates["username"] = body.username
+    if body.password:
+        if len(body.password) < 6:
+            raise HTTPException(400, "كلمة المرور قصيرة")
+        updates["password_hash"] = hash_pw(body.password)
+    if updates:
+        await db.users.update_one({"id": user["id"]}, {"$set": updates})
+    updated = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0})
+    return updated
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ADMIN AUTH
+# ══════════════════════════════════════════════════════════════════════════════
+
+@api_router.post("/admin/login")
 async def admin_login(body: AdminLogin):
     if body.password != ADMIN_PASSWORD:
-        raise HTTPException(status_code=401, detail="كلمة المرور غلط")
-    return {"token": create_token()}
+        raise HTTPException(401, "كلمة المرور غلط")
+    token = create_token({"sub": "admin", "role": "admin"}, expires_hours=48)
+    return {"token": token}
 
-@api_router.get("/auth/verify")
-async def verify_token(_: bool = Depends(get_admin)):
+@api_router.get("/admin/verify")
+async def admin_verify(_: bool = Depends(get_admin)):
     return {"valid": True}
 
-# ─── Categories ───────────────────────────────────────────────────────────────
+# Keep backward compat
+@api_router.post("/auth/admin-login")
+async def admin_login_legacy(body: AdminLogin):
+    return await admin_login(body)
 
-@api_router.get("/categories", response_model=List[Category])
+@api_router.get("/auth/verify")
+async def verify_legacy(_: bool = Depends(get_admin)):
+    return {"valid": True}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ADMIN – USERS & ANALYTICS
+# ══════════════════════════════════════════════════════════════════════════════
+
+@api_router.get("/admin/users")
+async def admin_list_users(_: bool = Depends(get_admin)):
+    users = await db.users.find({}, {"_id": 0, "password_hash": 0, "answered_question_ids": 0}).to_list(1000)
+    for u in users:
+        u["answered_count"] = 0
+        full = await db.users.find_one({"id": u["id"]}, {"answered_question_ids": 1})
+        if full:
+            u["answered_count"] = len(full.get("answered_question_ids", []))
+    return users
+
+@api_router.put("/admin/users/{user_id}")
+async def admin_update_user(user_id: str, body: AdminUserUpdate, _: bool = Depends(get_admin)):
+    updates = {"subscription_type": body.subscription_type}
+    if body.subscription_expires_at:
+        updates["subscription_expires_at"] = body.subscription_expires_at
+    elif body.subscription_type == "premium":
+        expires = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+        updates["subscription_expires_at"] = expires
+    else:
+        updates["subscription_expires_at"] = None
+    await db.users.update_one({"id": user_id}, {"$set": updates})
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    return user
+
+@api_router.delete("/admin/users/{user_id}")
+async def admin_delete_user(user_id: str, _: bool = Depends(get_admin)):
+    await db.users.delete_one({"id": user_id})
+    return {"message": "تم الحذف"}
+
+@api_router.get("/admin/analytics")
+async def admin_analytics(_: bool = Depends(get_admin)):
+    now = datetime.now(timezone.utc)
+    yesterday  = (now - timedelta(days=1)).isoformat()
+    week_ago   = (now - timedelta(days=7)).isoformat()
+    month_ago  = (now - timedelta(days=30)).isoformat()
+
+    users_total   = await db.users.count_documents({})
+    premium       = await db.users.count_documents({"subscription_type": "premium"})
+    recent_7d     = await db.users.count_documents({"created_at": {"$gte": week_ago}})
+    q_total       = await db.questions.count_documents({})
+    sessions_total= await db.game_sessions.count_documents({})
+    active_24h    = await db.game_sessions.count_documents({"created_at": {"$gte": yesterday}})
+    revenue_docs  = await db.payment_transactions.find({"payment_status": "paid"}, {"amount": 1}).to_list(1000)
+    total_revenue = sum(float(d.get("amount", 0)) for d in revenue_docs)
+    recent_txns   = await db.payment_transactions.find({}, {"_id": 0}).sort("created_at", -1).to_list(10)
+
+    cats = await db.categories.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(50)
+    cat_stats = []
+    for c in cats:
+        count = await db.questions.count_documents({"category_id": c["id"]})
+        cat_stats.append({"id": c["id"], "name": c["name"], "count": count})
+
+    return {
+        "users":    {"total": users_total, "premium": premium, "free": users_total - premium, "recent_7d": recent_7d},
+        "questions": {"total": q_total, "by_category": cat_stats},
+        "sessions": {"total": sessions_total, "active_24h": active_24h},
+        "revenue":  {"total": round(total_revenue, 2), "currency": "USD", "recent_transactions": recent_txns},
+    }
+
+@api_router.get("/admin/sessions")
+async def admin_sessions(_: bool = Depends(get_admin)):
+    sessions = await db.game_sessions.find({}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    return sessions
+
+@api_router.get("/admin/payments")
+async def admin_payments(_: bool = Depends(get_admin)):
+    txns = await db.payment_transactions.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return txns
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CATEGORIES
+# ══════════════════════════════════════════════════════════════════════════════
+
+@api_router.get("/categories")
 async def get_categories():
-    cats = await db.categories.find({}, {"_id": 0}).sort("order", 1).to_list(100)
-    return cats
+    return await db.categories.find({}, {"_id": 0}).sort("order", 1).to_list(100)
 
-@api_router.post("/categories", response_model=Category)
+@api_router.post("/categories")
 async def create_category(body: CategoryCreate, _: bool = Depends(get_admin)):
     cat = Category(**body.model_dump())
     await db.categories.insert_one(cat.model_dump())
     return cat
 
-@api_router.put("/categories/{cat_id}", response_model=Category)
+@api_router.put("/categories/{cat_id}")
 async def update_category(cat_id: str, body: CategoryCreate, _: bool = Depends(get_admin)):
-    update_data = body.model_dump()
-    update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
-    result = await db.categories.find_one_and_update(
-        {"id": cat_id}, {"$set": update_data}, {"_id": 0}, return_document=True
-    )
-    if not result:
-        raise HTTPException(status_code=404, detail="الفئة غير موجودة")
-    return result
+    upd = {**body.model_dump(), "updated_at": datetime.now(timezone.utc).isoformat()}
+    res = await db.categories.find_one_and_update({"id": cat_id}, {"$set": upd}, {"_id": 0}, return_document=True)
+    if not res:
+        raise HTTPException(404, "الفئة غير موجودة")
+    return res
 
 @api_router.delete("/categories/{cat_id}")
 async def delete_category(cat_id: str, _: bool = Depends(get_admin)):
@@ -161,105 +361,143 @@ async def delete_category(cat_id: str, _: bool = Depends(get_admin)):
     await db.questions.delete_many({"category_id": cat_id})
     return {"message": "تم الحذف"}
 
-# ─── Questions ────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# QUESTIONS  (no limit – admin can add unlimited)
+# ══════════════════════════════════════════════════════════════════════════════
 
-@api_router.get("/questions", response_model=List[Question])
+@api_router.get("/questions")
 async def get_questions(category_id: Optional[str] = None, difficulty: Optional[int] = None):
-    query = {}
-    if category_id:
-        query["category_id"] = category_id
-    if difficulty:
-        query["difficulty"] = difficulty
-    questions = await db.questions.find(query, {"_id": 0}).to_list(1000)
-    return questions
+    q = {}
+    if category_id: q["category_id"] = category_id
+    if difficulty:  q["difficulty"]   = difficulty
+    return await db.questions.find(q, {"_id": 0}).to_list(10000)
 
-@api_router.get("/questions/{q_id}", response_model=Question)
+@api_router.get("/questions/count")
+async def count_questions(category_id: Optional[str] = None, difficulty: Optional[int] = None):
+    q = {}
+    if category_id: q["category_id"] = category_id
+    if difficulty:  q["difficulty"]   = difficulty
+    return {"count": await db.questions.count_documents(q)}
+
+@api_router.get("/questions/{q_id}")
 async def get_question(q_id: str):
     q = await db.questions.find_one({"id": q_id}, {"_id": 0})
-    if not q:
-        raise HTTPException(status_code=404, detail="السؤال غير موجود")
+    if not q: raise HTTPException(404, "السؤال غير موجود")
     return q
 
-@api_router.post("/questions", response_model=Question)
+@api_router.post("/questions")
 async def create_question(body: QuestionCreate, _: bool = Depends(get_admin)):
     q = Question(**body.model_dump())
     await db.questions.insert_one(q.model_dump())
     return q
 
-@api_router.put("/questions/{q_id}", response_model=Question)
+@api_router.put("/questions/{q_id}")
 async def update_question(q_id: str, body: QuestionCreate, _: bool = Depends(get_admin)):
-    update_data = body.model_dump()
-    update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
-    result = await db.questions.find_one_and_update(
-        {"id": q_id}, {"$set": update_data}, {"_id": 0}, return_document=True
-    )
-    if not result:
-        raise HTTPException(status_code=404, detail="السؤال غير موجود")
-    return result
+    upd = {**body.model_dump(), "updated_at": datetime.now(timezone.utc).isoformat()}
+    res = await db.questions.find_one_and_update({"id": q_id}, {"$set": upd}, {"_id": 0}, return_document=True)
+    if not res: raise HTTPException(404, "السؤال غير موجود")
+    return res
 
 @api_router.delete("/questions/{q_id}")
 async def delete_question(q_id: str, _: bool = Depends(get_admin)):
     await db.questions.delete_one({"id": q_id})
     return {"message": "تم الحذف"}
 
-# ─── Game Session ─────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# GAME SESSION
+# ══════════════════════════════════════════════════════════════════════════════
 
-@api_router.post("/game/session", response_model=GameSession)
+@api_router.post("/game/session")
 async def create_session(body: GameSessionCreate):
-    session = GameSession(**body.model_dump())
-    await db.game_sessions.insert_one(session.model_dump())
-    return session
-
-@api_router.get("/game/session/{session_id}", response_model=GameSession)
-async def get_session(session_id: str):
-    session = await db.game_sessions.find_one({"id": session_id}, {"_id": 0})
-    if not session:
-        raise HTTPException(status_code=404, detail="الجلسة غير موجودة")
-    return session
-
-@api_router.put("/game/session/{session_id}", response_model=GameSession)
-async def update_session(session_id: str, body: GameSessionUpdate):
-    update_data = {k: v for k, v in body.model_dump().items() if v is not None}
-    update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
-    result = await db.game_sessions.find_one_and_update(
-        {"id": session_id}, {"$set": update_data}, {"_id": 0}, return_document=True
-    )
-    if not result:
-        raise HTTPException(status_code=404, detail="الجلسة غير موجودة")
+    session = {
+        "id": str(uuid.uuid4()),
+        "team1_name": body.team1_name,
+        "team2_name": body.team2_name,
+        "team1_score": 0,
+        "team2_score": 0,
+        "team1_categories": [],
+        "team2_categories": [],
+        "used_questions": [],
+        "user_id": body.user_id,
+        "status": "setup",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if body.user_id:
+        await db.users.update_one({"id": body.user_id}, {"$inc": {"game_count": 1}})
+    await db.game_sessions.insert_one(session)
+    result = {k: v for k, v in session.items() if k != "_id"}
     return result
 
-@api_router.post("/game/session/{session_id}/question")
-async def get_next_question(session_id: str, category_id: str, difficulty: int):
-    session = await db.game_sessions.find_one({"id": session_id}, {"_id": 0})
-    if not session:
-        raise HTTPException(status_code=404, detail="الجلسة غير موجودة")
+@api_router.get("/game/session/{session_id}")
+async def get_session(session_id: str):
+    s = await db.game_sessions.find_one({"id": session_id}, {"_id": 0})
+    if not s: raise HTTPException(404, "الجلسة غير موجودة")
+    return s
 
-    used = session.get("used_questions", [])
+@api_router.put("/game/session/{session_id}")
+async def update_session(session_id: str, body: GameSessionUpdate):
+    upd = {k: v for k, v in body.model_dump().items() if v is not None}
+    upd["updated_at"] = datetime.now(timezone.utc).isoformat()
+    res = await db.game_sessions.find_one_and_update({"id": session_id}, {"$set": upd}, {"_id": 0}, return_document=True)
+    if not res: raise HTTPException(404, "الجلسة غير موجودة")
+    return res
+
+@api_router.post("/game/session/{session_id}/question")
+async def get_next_question(session_id: str, category_id: str, difficulty: int,
+                            authorization: Optional[str] = Header(None)):
+    session = await db.game_sessions.find_one({"id": session_id}, {"_id": 0})
+    if not session: raise HTTPException(404, "الجلسة غير موجودة")
+
+    exclude_ids = list(session.get("used_questions", []))
+
+    # Premium users: also exclude globally answered questions
+    user = await get_current_user(authorization)
+    is_premium = False
+    if user:
+        is_premium = (user.get("subscription_type") == "premium")
+        if is_premium:
+            exclude_ids = list(set(exclude_ids + user.get("answered_question_ids", [])))
+
     available = await db.questions.find(
-        {"category_id": category_id, "difficulty": difficulty, "id": {"$nin": used}},
+        {"category_id": category_id, "difficulty": difficulty, "id": {"$nin": exclude_ids}},
         {"_id": 0}
-    ).to_list(100)
+    ).to_list(1000)
 
     if not available:
-        raise HTTPException(status_code=404, detail="لا يوجد أسئلة متاحة")
+        # If premium exhausted, reset session excludes only (not user's global history)
+        available = await db.questions.find(
+            {"category_id": category_id, "difficulty": difficulty},
+            {"_id": 0}
+        ).to_list(1000)
+        if not available:
+            raise HTTPException(404, "لا يوجد أسئلة")
 
     question = random.choice(available)
-    new_used = used + [question["id"]]
+
+    new_used = list(set(session.get("used_questions", []) + [question["id"]]))
     await db.game_sessions.update_one(
         {"id": session_id},
         {"$set": {"used_questions": new_used, "updated_at": datetime.now(timezone.utc).isoformat()}}
     )
+
+    # Track for premium users
+    if is_premium and user:
+        await db.users.update_one(
+            {"id": user["id"]},
+            {"$addToSet": {"answered_question_ids": question["id"]}}
+        )
+
     return question
 
 @api_router.post("/game/session/{session_id}/score")
-async def update_score(session_id: str, body: ScoreUpdate):
+async def update_score(session_id: str, body: ScoreUpdate,
+                       authorization: Optional[str] = Header(None)):
     session = await db.game_sessions.find_one({"id": session_id}, {"_id": 0})
-    if not session:
-        raise HTTPException(status_code=404, detail="الجلسة غير موجودة")
+    if not session: raise HTTPException(404, "الجلسة غير موجودة")
 
     field = "team1_score" if body.team == 1 else "team2_score"
-    current = session.get(field, 0)
-    new_score = max(0, current + body.points)
+    new_score = max(0, session.get(field, 0) + body.points)
     await db.game_sessions.update_one(
         {"id": session_id},
         {"$set": {field: new_score, "updated_at": datetime.now(timezone.utc).isoformat()}}
@@ -267,16 +505,127 @@ async def update_score(session_id: str, body: ScoreUpdate):
     updated = await db.game_sessions.find_one({"id": session_id}, {"_id": 0})
     return {"team1_score": updated["team1_score"], "team2_score": updated["team2_score"]}
 
-# ─── Secret Word (QR) ─────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# SECRET WORD (QR)
+# ══════════════════════════════════════════════════════════════════════════════
 
 @api_router.get("/secret/{question_id}")
 async def get_secret_word(question_id: str):
     q = await db.questions.find_one({"id": question_id}, {"_id": 0})
-    if not q:
-        raise HTTPException(status_code=404, detail="الكلمة غير موجودة")
+    if not q: raise HTTPException(404, "الكلمة غير موجودة")
     return {"word": q.get("answer", ""), "image_url": q.get("image_url", ""), "difficulty": q.get("difficulty", 200)}
 
-# ─── Seed ─────────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# SUBSCRIPTIONS (STRIPE)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@api_router.get("/subscription/plans")
+async def get_plans():
+    return [{"id": k, **v} for k, v in SUBSCRIPTION_PLANS.items()]
+
+@api_router.post("/subscription/checkout")
+async def create_checkout(body: CheckoutCreate, user: dict = Depends(require_user), request: Request = None):
+    plan = SUBSCRIPTION_PLANS.get(body.plan_id)
+    if not plan:
+        raise HTTPException(400, "الخطة غير موجودة")
+    if not STRIPE_API_KEY or STRIPE_API_KEY == "sk_test_emergent":
+        raise HTTPException(503, "خدمة الدفع غير مفعّلة حتى الآن، تواصل مع الإدارة")
+
+    origin = body.origin_url.rstrip("/")
+    success_url = f"{origin}/payment/success?session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url  = f"{origin}/pricing"
+
+    stripe = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=f"{origin}/api/webhook/stripe")
+    req = CheckoutSessionRequest(
+        amount=plan["amount"],
+        currency=plan["currency"],
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata={"user_id": user["id"], "plan_id": body.plan_id, "email": user["email"]},
+    )
+    session: CheckoutSessionResponse = await stripe.create_checkout_session(req)
+
+    txn = {
+        "id": str(uuid.uuid4()),
+        "session_id": session.session_id,
+        "user_id": user["id"],
+        "email": user["email"],
+        "plan_id": body.plan_id,
+        "amount": plan["amount"],
+        "currency": plan["currency"],
+        "payment_status": "pending",
+        "status": "initiated",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.payment_transactions.insert_one(txn)
+    return {"url": session.url, "session_id": session.session_id}
+
+@api_router.get("/subscription/status/{stripe_session_id}")
+async def check_payment_status(stripe_session_id: str, user: dict = Depends(require_user)):
+    txn = await db.payment_transactions.find_one({"session_id": stripe_session_id}, {"_id": 0})
+    if not txn:
+        raise HTTPException(404, "الدفعة غير موجودة")
+
+    # Already processed
+    if txn.get("payment_status") == "paid":
+        return {"payment_status": "paid", "status": "complete"}
+
+    stripe = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url="")
+    checkout_status: CheckoutStatusResponse = await stripe.get_checkout_status(stripe_session_id)
+
+    update = {
+        "payment_status": checkout_status.payment_status,
+        "status": checkout_status.status,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.payment_transactions.update_one({"session_id": stripe_session_id}, {"$set": update})
+
+    if checkout_status.payment_status == "paid":
+        plan_id = txn.get("plan_id", "monthly")
+        plan    = SUBSCRIPTION_PLANS.get(plan_id, SUBSCRIPTION_PLANS["monthly"])
+        expires = (datetime.now(timezone.utc) + timedelta(days=plan["days"])).isoformat()
+        already = await db.users.find_one({"id": user["id"], "subscription_type": "premium"})
+        if not already or not already.get("subscription_expires_at"):
+            await db.users.update_one(
+                {"id": user["id"]},
+                {"$set": {"subscription_type": "premium", "subscription_expires_at": expires}}
+            )
+
+    return {"payment_status": checkout_status.payment_status, "status": checkout_status.status}
+
+@api_router.post("/webhook/stripe")
+async def stripe_webhook(request: Request):
+    body = await request.body()
+    sig  = request.headers.get("Stripe-Signature", "")
+    stripe = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url="")
+    try:
+        event = await stripe.handle_webhook(body, sig)
+        if event.payment_status == "paid":
+            txn = await db.payment_transactions.find_one({"session_id": event.session_id})
+            if txn and txn.get("payment_status") != "paid":
+                plan_id = txn.get("plan_id", "monthly")
+                plan    = SUBSCRIPTION_PLANS.get(plan_id, SUBSCRIPTION_PLANS["monthly"])
+                expires = (datetime.now(timezone.utc) + timedelta(days=plan["days"])).isoformat()
+                await db.users.update_one(
+                    {"id": txn["user_id"]},
+                    {"$set": {"subscription_type": "premium", "subscription_expires_at": expires}}
+                )
+                await db.payment_transactions.update_one(
+                    {"session_id": event.session_id},
+                    {"$set": {"payment_status": "paid", "status": "complete"}}
+                )
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+    return {"received": True}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SEED
+# ══════════════════════════════════════════════════════════════════════════════
+
+def q(cat, diff, text, answer, img="", aimg="", qtype="text"):
+    return {"id": str(uuid.uuid4()), "category_id": cat, "difficulty": diff,
+            "text": text, "answer": answer, "image_url": img, "answer_image_url": aimg,
+            "question_type": qtype, "created_at": datetime.now(timezone.utc).isoformat()}
 
 @api_router.post("/seed")
 async def seed_data(force: bool = False, _: bool = Depends(get_admin)):
@@ -288,271 +637,504 @@ async def seed_data(force: bool = False, _: bool = Depends(get_admin)):
         await db.questions.delete_many({})
 
     categories = [
-        {"id": "cat_flags", "name": "اعلام دول", "icon": "🏳️", "image_url": "", "is_special": False, "color": "#1a6b3c", "order": 1, "description": "خمّن علم الدولة!", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": "cat_easy", "name": "معلومات سهلة", "icon": "💡", "image_url": "", "is_special": False, "color": "#1a3a6b", "order": 2, "description": "معلومات سهلة للجميع", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": "cat_saudi", "name": "السعودية", "icon": "🇸🇦", "image_url": "", "is_special": False, "color": "#5B0E14", "order": 3, "description": "اسئلة عن المملكة", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": "cat_islamic", "name": "اسلامي", "icon": "☪️", "image_url": "", "is_special": False, "color": "#2d5a27", "order": 4, "description": "أسئلة إسلامية", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": "cat_science", "name": "علوم بسيطة", "icon": "🔬", "image_url": "", "is_special": False, "color": "#1a3a6b", "order": 5, "description": "علوم للجميع", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": "cat_logos", "name": "شعارات", "icon": "🏷️", "image_url": "", "is_special": False, "color": "#6b3a1a", "order": 6, "description": "خمّن الشعار!", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": "cat_word", "name": "ولا كلمة", "icon": "🤫", "image_url": "", "is_special": True, "color": "#4a1a6b", "order": 7, "description": "وصّف بدون ما تقول الكلمة!", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_flags",   "name":"اعلام دول",      "icon":"🏳️","image_url":"","is_special":False,"color":"#166534","order":1,"description":"خمّن علم الدولة!","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_easy",    "name":"معلومات سهلة",   "icon":"💡","image_url":"","is_special":False,"color":"#1e40af","order":2,"description":"معلومات للجميع","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_saudi",   "name":"السعودية",       "icon":"🇸🇦","image_url":"","is_special":False,"color":"#5B0E14","order":3,"description":"أسئلة عن المملكة","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_islamic", "name":"اسلامي",         "icon":"☪️","image_url":"","is_special":False,"color":"#065f46","order":4,"description":"أسئلة إسلامية","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_science", "name":"علوم بسيطة",     "icon":"🔬","image_url":"","is_special":False,"color":"#4c1d95","order":5,"description":"علوم للجميع","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_logos",   "name":"شعارات",         "icon":"🏷️","image_url":"","is_special":False,"color":"#7c2d12","order":6,"description":"خمّن الشعار!","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_word",    "name":"ولا كلمة",       "icon":"🤫","image_url":"","is_special":True, "color":"#4a044e","order":7,"description":"وصّف بدون ما تقول الكلمة!","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_culture", "name":"ثقافة شعبية",    "icon":"🎬","image_url":"","is_special":False,"color":"#831843","order":8,"description":"مسلسلات وأفلام وبرامج","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_sports",  "name":"رياضة",          "icon":"⚽","image_url":"","is_special":False,"color":"#134e4a","order":9,"description":"كرة وبطولات","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_music",   "name":"موسيقى وفن",     "icon":"🎵","image_url":"","is_special":False,"color":"#1e3a5f","order":10,"description":"أغاني وفنانين","created_at":datetime.now(timezone.utc).isoformat()},
     ]
     await db.categories.insert_many(categories)
 
     questions = [
-        # ─── اعلام دول ───
-        # 200 - Easy flags
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 200, "text": "علم أي دولة هذا؟", "answer": "اليابان", "image_url": "https://flagcdn.com/w320/jp.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 200, "text": "علم أي دولة هذا؟", "answer": "فرنسا", "image_url": "https://flagcdn.com/w320/fr.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 200, "text": "علم أي دولة هذا؟", "answer": "المملكة المتحدة", "image_url": "https://flagcdn.com/w320/gb.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 200, "text": "علم أي دولة هذا؟", "answer": "أمريكا", "image_url": "https://flagcdn.com/w320/us.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 200, "text": "علم أي دولة هذا؟", "answer": "المملكة العربية السعودية", "image_url": "https://flagcdn.com/w320/sa.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 200, "text": "علم أي دولة هذا؟", "answer": "الإمارات", "image_url": "https://flagcdn.com/w320/ae.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 200, "text": "علم أي دولة هذا؟", "answer": "مصر", "image_url": "https://flagcdn.com/w320/eg.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 200, "text": "علم أي دولة هذا؟", "answer": "ألمانيا", "image_url": "https://flagcdn.com/w320/de.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 200, "text": "علم أي دولة هذا؟", "answer": "إيطاليا", "image_url": "https://flagcdn.com/w320/it.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 200, "text": "علم أي دولة هذا؟", "answer": "كندا", "image_url": "https://flagcdn.com/w320/ca.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        # 400 - Medium flags
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 400, "text": "علم أي دولة هذا؟", "answer": "البرازيل", "image_url": "https://flagcdn.com/w320/br.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 400, "text": "علم أي دولة هذا؟", "answer": "تركيا", "image_url": "https://flagcdn.com/w320/tr.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 400, "text": "علم أي دولة هذا؟", "answer": "أستراليا", "image_url": "https://flagcdn.com/w320/au.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 400, "text": "علم أي دولة هذا؟", "answer": "كوريا الجنوبية", "image_url": "https://flagcdn.com/w320/kr.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 400, "text": "علم أي دولة هذا؟", "answer": "الأردن", "image_url": "https://flagcdn.com/w320/jo.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 400, "text": "علم أي دولة هذا؟", "answer": "قطر", "image_url": "https://flagcdn.com/w320/qa.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 400, "text": "علم أي دولة هذا؟", "answer": "المكسيك", "image_url": "https://flagcdn.com/w320/mx.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 400, "text": "علم أي دولة هذا؟", "answer": "الهند", "image_url": "https://flagcdn.com/w320/in.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 400, "text": "علم أي دولة هذا؟", "answer": "إسبانيا", "image_url": "https://flagcdn.com/w320/es.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 400, "text": "علم أي دولة هذا؟", "answer": "هولندا", "image_url": "https://flagcdn.com/w320/nl.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        # 600 - Hard flags
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 600, "text": "علم أي دولة هذا؟", "answer": "البرتغال", "image_url": "https://flagcdn.com/w320/pt.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 600, "text": "علم أي دولة هذا؟", "answer": "السويد", "image_url": "https://flagcdn.com/w320/se.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 600, "text": "علم أي دولة هذا؟", "answer": "النرويج", "image_url": "https://flagcdn.com/w320/no.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 600, "text": "علم أي دولة هذا؟", "answer": "بلجيكا", "image_url": "https://flagcdn.com/w320/be.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 600, "text": "علم أي دولة هذا؟", "answer": "الأرجنتين", "image_url": "https://flagcdn.com/w320/ar.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 600, "text": "علم أي دولة هذا؟", "answer": "فنلندا", "image_url": "https://flagcdn.com/w320/fi.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 600, "text": "علم أي دولة هذا؟", "answer": "تشيلي", "image_url": "https://flagcdn.com/w320/cl.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 600, "text": "علم أي دولة هذا؟", "answer": "باكستان", "image_url": "https://flagcdn.com/w320/pk.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 600, "text": "علم أي دولة هذا؟", "answer": "إندونيسيا", "image_url": "https://flagcdn.com/w320/id.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_flags", "difficulty": 600, "text": "علم أي دولة هذا؟", "answer": "سويسرا", "image_url": "https://flagcdn.com/w320/ch.png", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        # ── اعلام دول ─────────────────────────────────────────────────
+        q("cat_flags",200,"علم أي دولة هذا؟","اليابان","https://flagcdn.com/w320/jp.png"),
+        q("cat_flags",200,"علم أي دولة هذا؟","فرنسا","https://flagcdn.com/w320/fr.png"),
+        q("cat_flags",200,"علم أي دولة هذا؟","المملكة المتحدة","https://flagcdn.com/w320/gb.png"),
+        q("cat_flags",200,"علم أي دولة هذا؟","أمريكا","https://flagcdn.com/w320/us.png"),
+        q("cat_flags",200,"علم أي دولة هذا؟","السعودية","https://flagcdn.com/w320/sa.png"),
+        q("cat_flags",200,"علم أي دولة هذا؟","الإمارات","https://flagcdn.com/w320/ae.png"),
+        q("cat_flags",200,"علم أي دولة هذا؟","مصر","https://flagcdn.com/w320/eg.png"),
+        q("cat_flags",200,"علم أي دولة هذا؟","ألمانيا","https://flagcdn.com/w320/de.png"),
+        q("cat_flags",200,"علم أي دولة هذا؟","إيطاليا","https://flagcdn.com/w320/it.png"),
+        q("cat_flags",200,"علم أي دولة هذا؟","كندا","https://flagcdn.com/w320/ca.png"),
+        q("cat_flags",200,"علم أي دولة هذا؟","الصين","https://flagcdn.com/w320/cn.png"),
+        q("cat_flags",200,"علم أي دولة هذا؟","روسيا","https://flagcdn.com/w320/ru.png"),
+        q("cat_flags",200,"علم أي دولة هذا؟","البرازيل","https://flagcdn.com/w320/br.png"),
+        q("cat_flags",200,"علم أي دولة هذا؟","الكويت","https://flagcdn.com/w320/kw.png"),
+        q("cat_flags",200,"علم أي دولة هذا؟","قطر","https://flagcdn.com/w320/qa.png"),
+        q("cat_flags",400,"علم أي دولة هذا؟","تركيا","https://flagcdn.com/w320/tr.png"),
+        q("cat_flags",400,"علم أي دولة هذا؟","أستراليا","https://flagcdn.com/w320/au.png"),
+        q("cat_flags",400,"علم أي دولة هذا؟","كوريا الجنوبية","https://flagcdn.com/w320/kr.png"),
+        q("cat_flags",400,"علم أي دولة هذا؟","الأردن","https://flagcdn.com/w320/jo.png"),
+        q("cat_flags",400,"علم أي دولة هذا؟","المكسيك","https://flagcdn.com/w320/mx.png"),
+        q("cat_flags",400,"علم أي دولة هذا؟","الهند","https://flagcdn.com/w320/in.png"),
+        q("cat_flags",400,"علم أي دولة هذا؟","إسبانيا","https://flagcdn.com/w320/es.png"),
+        q("cat_flags",400,"علم أي دولة هذا؟","هولندا","https://flagcdn.com/w320/nl.png"),
+        q("cat_flags",400,"علم أي دولة هذا؟","عُمان","https://flagcdn.com/w320/om.png"),
+        q("cat_flags",400,"علم أي دولة هذا؟","البحرين","https://flagcdn.com/w320/bh.png"),
+        q("cat_flags",400,"علم أي دولة هذا؟","المغرب","https://flagcdn.com/w320/ma.png"),
+        q("cat_flags",400,"علم أي دولة هذا؟","تونس","https://flagcdn.com/w320/tn.png"),
+        q("cat_flags",400,"علم أي دولة هذا؟","الجزائر","https://flagcdn.com/w320/dz.png"),
+        q("cat_flags",400,"علم أي دولة هذا؟","اليونان","https://flagcdn.com/w320/gr.png"),
+        q("cat_flags",400,"علم أي دولة هذا؟","بولندا","https://flagcdn.com/w320/pl.png"),
+        q("cat_flags",600,"علم أي دولة هذا؟","البرتغال","https://flagcdn.com/w320/pt.png"),
+        q("cat_flags",600,"علم أي دولة هذا؟","السويد","https://flagcdn.com/w320/se.png"),
+        q("cat_flags",600,"علم أي دولة هذا؟","النرويج","https://flagcdn.com/w320/no.png"),
+        q("cat_flags",600,"علم أي دولة هذا؟","بلجيكا","https://flagcdn.com/w320/be.png"),
+        q("cat_flags",600,"علم أي دولة هذا؟","الأرجنتين","https://flagcdn.com/w320/ar.png"),
+        q("cat_flags",600,"علم أي دولة هذا؟","فنلندا","https://flagcdn.com/w320/fi.png"),
+        q("cat_flags",600,"علم أي دولة هذا؟","تشيلي","https://flagcdn.com/w320/cl.png"),
+        q("cat_flags",600,"علم أي دولة هذا؟","باكستان","https://flagcdn.com/w320/pk.png"),
+        q("cat_flags",600,"علم أي دولة هذا؟","إندونيسيا","https://flagcdn.com/w320/id.png"),
+        q("cat_flags",600,"علم أي دولة هذا؟","سويسرا","https://flagcdn.com/w320/ch.png"),
+        q("cat_flags",600,"علم أي دولة هذا؟","النمسا","https://flagcdn.com/w320/at.png"),
+        q("cat_flags",600,"علم أي دولة هذا؟","الدنمارك","https://flagcdn.com/w320/dk.png"),
+        q("cat_flags",600,"علم أي دولة هذا؟","رومانيا","https://flagcdn.com/w320/ro.png"),
+        q("cat_flags",600,"علم أي دولة هذا؟","كرواتيا","https://flagcdn.com/w320/hr.png"),
+        q("cat_flags",600,"علم أي دولة هذا؟","أيرلندا","https://flagcdn.com/w320/ie.png"),
 
-        # ─── معلومات سهلة ───
-        # 200
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 200, "text": "كم يوم في الأسبوع؟", "answer": "7 أيام", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 200, "text": "كم شهر في السنة؟", "answer": "12 شهر", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 200, "text": "كم إصبع في اليدين معاً؟", "answer": "10 أصابع", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 200, "text": "ما هو لون السماء في النهار؟", "answer": "أزرق", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 200, "text": "كم ساعة في اليوم؟", "answer": "24 ساعة", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 200, "text": "ما هو الحيوان المعروف بالوفاء؟", "answer": "الكلب", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 200, "text": "أيهم أكبر: القمر أم الشمس؟", "answer": "الشمس", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 200, "text": "كم عدد أرجل الكرسي عادةً؟", "answer": "4 أرجل", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 200, "text": "ما هو لون الحليب؟", "answer": "أبيض", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 200, "text": "ما هو أسرع حيوان بري؟", "answer": "الفهد", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        # 400
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 400, "text": "كم عدد كوكب المجموعة الشمسية؟", "answer": "8 كواكب", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 400, "text": "ما هي أكبر دولة في العالم مساحةً؟", "answer": "روسيا", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 400, "text": "كم عدد قارات العالم؟", "answer": "7 قارات", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 400, "text": "ما هو أطول نهر في العالم؟", "answer": "النيل", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 400, "text": "كم عدد حواس الإنسان؟", "answer": "5 حواس", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 400, "text": "ما هي عاصمة فرنسا؟", "answer": "باريس", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 400, "text": "ما هو أكبر محيط في العالم؟", "answer": "المحيط الهادئ", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 400, "text": "كم عظمة في جسم الإنسان البالغ؟", "answer": "206 عظمة", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 400, "text": "ما هو الجهاز الذي يضخ الدم في جسم الإنسان؟", "answer": "القلب", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 400, "text": "كم مرة تقريباً يدق قلب الإنسان في الدقيقة؟", "answer": "70 مرة", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        # 600
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 600, "text": "ما هو أعمق بحر في العالم؟", "answer": "البحر الأبيض المتوسط (أعمق منطقة في المحيط الهادئ - حفرة ماريانا)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 600, "text": "كم تبلغ سرعة الضوء تقريباً؟", "answer": "300,000 كيلومتر في الثانية", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 600, "text": "ما هو العنصر الأكثر وفرة في الغلاف الجوي؟", "answer": "النيتروجين", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 600, "text": "كم ضلعاً للمسدس؟", "answer": "6 أضلاع", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 600, "text": "ما هو أثقل المعادن الطبيعية؟", "answer": "الأوزميوم", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 600, "text": "كم عدد الكروموسومات في جسم الإنسان السليم؟", "answer": "46 كروموسوم", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 600, "text": "ما هو الجهاز العصبي الذي يتحكم في الوظائف اللاإرادية؟", "answer": "الجهاز العصبي اللاإرادي", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 600, "text": "ما هو أبرد كوكب في المجموعة الشمسية؟", "answer": "أورانوس", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 600, "text": "كم سنة تعيش السلحفاة تقريباً؟", "answer": "150 سنة", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_easy", "difficulty": 600, "text": "ما هو اسم العلم الذي يدرس الفضاء؟", "answer": "علم الفلك", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        # ── معلومات سهلة ──────────────────────────────────────────────
+        q("cat_easy",200,"كم يوم في الأسبوع؟","7"),
+        q("cat_easy",200,"كم شهر في السنة؟","12"),
+        q("cat_easy",200,"كم إصبع في اليدين؟","10"),
+        q("cat_easy",200,"ما لون السماء؟","أزرق"),
+        q("cat_easy",200,"كم ساعة في اليوم؟","24"),
+        q("cat_easy",200,"أسرع حيوان بري؟","الفهد"),
+        q("cat_easy",200,"أكبر الكواكب في المجموعة الشمسية؟","المشتري"),
+        q("cat_easy",200,"ما لون الحليب؟","أبيض"),
+        q("cat_easy",200,"كم أرجل للعنكبوت؟","8"),
+        q("cat_easy",200,"حيوان معروف بالوفاء؟","الكلب"),
+        q("cat_easy",200,"وش الغاز اللي نتنفسه؟","الأكسجين"),
+        q("cat_easy",200,"كم يوم في السنة؟","365"),
+        q("cat_easy",200,"أطول عظمة في الجسم؟","عظمة الفخذ"),
+        q("cat_easy",200,"أكبر دولة مساحةً؟","روسيا"),
+        q("cat_easy",200,"كم قارة في العالم؟","7"),
+        q("cat_easy",400,"أطول نهر في العالم؟","النيل"),
+        q("cat_easy",400,"كم كوكب في المجموعة الشمسية؟","8"),
+        q("cat_easy",400,"عاصمة فرنسا؟","باريس"),
+        q("cat_easy",400,"أكبر محيط؟","المحيط الهادئ"),
+        q("cat_easy",400,"درجة غليان الماء؟","100 درجة"),
+        q("cat_easy",400,"كم عظمة في جسم الإنسان؟","206"),
+        q("cat_easy",400,"كم مرة يدق القلب في الدقيقة؟","70"),
+        q("cat_easy",400,"عاصمة اليابان؟","طوكيو"),
+        q("cat_easy",400,"عاصمة البرازيل؟","برازيليا"),
+        q("cat_easy",400,"كم حواس الإنسان الأساسية؟","5"),
+        q("cat_easy",400,"من اخترع المصباح؟","توماس إديسون"),
+        q("cat_easy",400,"عاصمة أستراليا؟","كانبيرا"),
+        q("cat_easy",400,"كم قدم في الميل؟","5280"),
+        q("cat_easy",400,"أثقل المعادن الطبيعية؟","الأوزميوم"),
+        q("cat_easy",400,"الجهاز المسؤول عن ضخ الدم؟","القلب"),
+        q("cat_easy",600,"سرعة الضوء تقريباً؟","300,000 كم/ثانية"),
+        q("cat_easy",600,"الغاز الأكثر في الغلاف الجوي؟","النيتروجين"),
+        q("cat_easy",600,"كم كروموسوم لدى الإنسان؟","46"),
+        q("cat_easy",600,"ما المعدن السائل عند درجة حرارة الغرفة؟","الزئبق"),
+        q("cat_easy",600,"كم سنة تعيش السلحفاة؟","150"),
+        q("cat_easy",600,"الكوكب الأبرد؟","أورانوس"),
+        q("cat_easy",600,"ماذا تسمى دراسة الأحافير؟","علم الحفريات"),
+        q("cat_easy",600,"رمز الكيمياء للذهب؟","Au"),
+        q("cat_easy",600,"رمز الكيمياء للحديد؟","Fe"),
+        q("cat_easy",600,"رمز الكيمياء للصوديوم؟","Na"),
+        q("cat_easy",600,"عدد أضلاع السداسي؟","6"),
+        q("cat_easy",600,"أعمق نقطة في المحيط؟","حفرة ماريانا"),
+        q("cat_easy",600,"النظرية التي تصف نشأة الكون؟","الانفجار العظيم"),
+        q("cat_easy",600,"وحدة قياس القوة؟","النيوتن"),
+        q("cat_easy",600,"كم أسنان للإنسان البالغ؟","32"),
 
-        # ─── السعودية ───
-        # 200
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 200, "text": "وش عاصمة السعودية؟", "answer": "الرياض", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 200, "text": "وش اسم أكبر مسجد في العالم الموجود بالسعودية؟", "answer": "المسجد الحرام", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 200, "text": "ما هي لغة السعوديين الرسمية؟", "answer": "العربية", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 200, "text": "في أي قارة تقع المملكة العربية السعودية؟", "answer": "آسيا", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 200, "text": "ما هي عملة المملكة العربية السعودية؟", "answer": "الريال السعودي", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 200, "text": "وش اسم ثاني أكبر مدينة في السعودية؟", "answer": "جدة", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 200, "text": "ما هو اليوم الوطني السعودي؟", "answer": "23 سبتمبر", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 200, "text": "وش اسم الملك المؤسس للمملكة العربية السعودية؟", "answer": "الملك عبدالعزيز", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 200, "text": "ما هو المشروب الوطني غير الرسمي في السعودية؟", "answer": "القهوة العربية", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 200, "text": "كم منطقة إدارية في المملكة العربية السعودية؟", "answer": "13 منطقة", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        # 400
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 400, "text": "في أي سنة تأسست المملكة العربية السعودية؟", "answer": "1932", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 400, "text": "ما اسم أطول برج في السعودية؟", "answer": "برج المملكة", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 400, "text": "ما هو اسم منطقة السعودية المشهورة بالورد الطائفي؟", "answer": "الطائف", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 400, "text": "ما هي وجبة السعودية الوطنية الشهيرة؟", "answer": "الكبسة", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 400, "text": "ما اسم أعلى جبل في المملكة العربية السعودية؟", "answer": "جبل السودة", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 400, "text": "كم يبلغ عدد سكان المملكة تقريباً؟", "answer": "35 مليون", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 400, "text": "ما هو اسم الموقع الأثري السعودي المدرج في اليونسكو؟", "answer": "العُلا (مدائن صالح)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 400, "text": "ما هو اسم مشروع المدينة المستقبلية السعودية؟", "answer": "نيوم", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 400, "text": "ما هو اسم شركة النفط السعودية العملاقة؟", "answer": "أرامكو", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 400, "text": "ما اسم الممر المائي الذي تطل عليه جدة؟", "answer": "البحر الأحمر", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        # 600
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 600, "text": "في أي سنة اكتُشف النفط في السعودية؟", "answer": "1938", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 600, "text": "ما هي المدينة السعودية التي تضم أقدم ميناء؟", "answer": "جدة", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 600, "text": "كم يبلغ طول الحد البري السعودي تقريباً؟", "answer": "4431 كيلومتر", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 600, "text": "ما هو المركز المالي السعودي في رؤية 2030؟", "answer": "الرياض مركز للمال والأعمال العالمي", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 600, "text": "كم عدد محافظات منطقة مكة المكرمة؟", "answer": "10 محافظات", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 600, "text": "ما هو اسم صحراء الربع الخالي بالإنجليزية؟", "answer": "Empty Quarter", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 600, "text": "ما اسم أول جامعة أُسست في المملكة العربية السعودية؟", "answer": "جامعة الملك سعود", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 600, "text": "كم تبلغ مساحة المملكة تقريباً؟", "answer": "2.15 مليون كيلومتر مربع", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 600, "text": "ما هو اسم منطقة التوسعة السعودية الجديدة في البحر الأحمر؟", "answer": "مشروع البحر الأحمر (NEOM)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_saudi", "difficulty": 600, "text": "ما هو اسم المبادرة السعودية الخضراء لزراعة الأشجار؟", "answer": "السعودية الخضراء", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        # ── السعودية ──────────────────────────────────────────────────
+        q("cat_saudi",200,"عاصمة السعودية؟","الرياض"),
+        q("cat_saudi",200,"أكبر مسجد في العالم؟","المسجد الحرام"),
+        q("cat_saudi",200,"عملة السعودية؟","الريال"),
+        q("cat_saudi",200,"كم منطقة إدارية في السعودية؟","13"),
+        q("cat_saudi",200,"اليوم الوطني السعودي؟","23 سبتمبر"),
+        q("cat_saudi",200,"الملك المؤسس للمملكة؟","الملك عبدالعزيز"),
+        q("cat_saudi",200,"ثاني أكبر مدن السعودية؟","جدة"),
+        q("cat_saudi",200,"المشروب الشعبي السعودي الأشهر؟","القهوة العربية"),
+        q("cat_saudi",200,"البحر الذي تطل عليه جدة؟","البحر الأحمر"),
+        q("cat_saudi",200,"أشهر وجبة سعودية؟","الكبسة"),
+        q("cat_saudi",200,"أين يقع المسجد النبوي؟","المدينة المنورة"),
+        q("cat_saudi",200,"ما اسم مشروع المدينة المستقبلية؟","نيوم"),
+        q("cat_saudi",200,"شركة النفط السعودية العملاقة؟","أرامكو"),
+        q("cat_saudi",200,"موقع أثري سعودي مشهور؟","العُلا / مدائن صالح"),
+        q("cat_saudi",200,"أعلى جبل في السعودية؟","جبل السودة"),
+        q("cat_saudi",400,"سنة تأسيس المملكة العربية السعودية؟","1932"),
+        q("cat_saudi",400,"أكبر صحراء في السعودية؟","الربع الخالي"),
+        q("cat_saudi",400,"سنة اكتشاف النفط في السعودية؟","1938"),
+        q("cat_saudi",400,"كم مسيرة يستغرق الحج؟","5 أيام"),
+        q("cat_saudi",400,"المدينة السعودية المعروفة بالورد؟","الطائف"),
+        q("cat_saudi",400,"أول جامعة في السعودية؟","جامعة الملك سعود"),
+        q("cat_saudi",400,"عدد سكان السعودية تقريباً؟","35 مليون"),
+        q("cat_saudi",400,"الرمز الوطني على علم السعودية؟","السيف والنخلة"),
+        q("cat_saudi",400,"أطول برج في الرياض؟","برج المملكة"),
+        q("cat_saudi",400,"المبادرة البيئية السعودية الكبرى؟","السعودية الخضراء"),
+        q("cat_saudi",400,"خطة التنويع الاقتصادي السعودية؟","رؤية 2030"),
+        q("cat_saudi",400,"البحر الذي تطل عليه المنطقة الشرقية؟","الخليج العربي"),
+        q("cat_saudi",400,"مطعم سعودي شعبي لكل المناسبات؟","مطاعم البيك"),
+        q("cat_saudi",400,"منطقة السعودية المشهورة بزراعة التمر؟","المدينة المنورة / القصيم"),
+        q("cat_saudi",400,"أشهر حي تاريخي في الرياض؟","الدرعية"),
+        q("cat_saudi",600,"مساحة السعودية تقريباً؟","2.15 مليون كم٢"),
+        q("cat_saudi",600,"طول الحدود البرية السعودية؟","4431 كم"),
+        q("cat_saudi",600,"أول سفير سعودي لدى الولايات المتحدة؟","الأمير بندر بن سلطان"),
+        q("cat_saudi",600,"عدد محافظات منطقة مكة المكرمة؟","10"),
+        q("cat_saudi",600,"اسم الربع الخالي بالإنجليزية؟","Empty Quarter"),
+        q("cat_saudi",600,"أعمق بئر نفط في السعودية؟","شيبة"),
+        q("cat_saudi",600,"السنة التي عادت فيها السينما للسعودية؟","2018"),
+        q("cat_saudi",600,"حاكم الرياض في زمن الملك عبدالعزيز؟","الملك عبدالعزيز نفسه"),
+        q("cat_saudi",600,"سنة انضمام السعودية لمجموعة العشرين؟","1999"),
+        q("cat_saudi",600,"أول امرأة سعودية تحصل على ترخيص قيادة؟","2018 (السنة التي سُمح فيها)"),
+        q("cat_saudi",600,"كم نسمة في الرياض تقريباً؟","8 مليون"),
+        q("cat_saudi",600,"مؤسس مدينة الرياض الحديثة؟","الملك عبدالعزيز"),
+        q("cat_saudi",600,"تلقّب مدينة جدة بـ؟","عروس البحر الأحمر"),
+        q("cat_saudi",600,"سنة دخول السعودية الأمم المتحدة؟","1945"),
+        q("cat_saudi",600,"ما هو النظام السياسي للسعودية؟","ملكية مطلقة"),
 
-        # ─── اسلامي ───
-        # 200
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 200, "text": "كم عدد أركان الإسلام؟", "answer": "5 أركان", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 200, "text": "ما هي أول سورة في القرآن الكريم؟", "answer": "سورة الفاتحة", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 200, "text": "كم عدد سور القرآن الكريم؟", "answer": "114 سورة", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 200, "text": "في أي شهر يصوم المسلمون؟", "answer": "رمضان", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 200, "text": "كم عدد الصلوات اليومية؟", "answer": "5 صلوات", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 200, "text": "إلى أي مكان يتجه المسلم أثناء الصلاة؟", "answer": "الكعبة المشرفة", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 200, "text": "ما هو اسم الكتاب المقدس للمسلمين؟", "answer": "القرآن الكريم", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 200, "text": "ما هو اليوم الذي يحتفل فيه المسلمون بنهاية رمضان؟", "answer": "عيد الفطر", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 200, "text": "في أي مدينة وُلد النبي محمد صلى الله عليه وسلم؟", "answer": "مكة المكرمة", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 200, "text": "ما هو اسم أذان الفجر الخاص؟", "answer": "الصلاة خير من النوم", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        # 400
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 400, "text": "كم عدد أنبياء الإسلام المذكورين في القرآن؟", "answer": "25 نبياً", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 400, "text": "ما هي آخر سورة نزلت في القرآن الكريم؟", "answer": "سورة النصر", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 400, "text": "كم عدد أجزاء القرآن الكريم؟", "answer": "30 جزءاً", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 400, "text": "ما هو اليوم المقدس في الإسلام للجمعة؟", "answer": "يوم الجمعة", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 400, "text": "ما هي نسبة الزكاة الواجبة على المال؟", "answer": "2.5%", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 400, "text": "ما هو اسم ليلة القدر في القرآن؟", "answer": "ليلة القدر - خير من ألف شهر", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 400, "text": "ما عدد ركعات صلاة المغرب؟", "answer": "3 ركعات", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 400, "text": "ما هي المدينة التي هاجر إليها النبي من مكة؟", "answer": "المدينة المنورة", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 400, "text": "كم عدد آيات سورة البقرة؟", "answer": "286 آية", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 400, "text": "ما هو اسم أول مسجد بني في الإسلام؟", "answer": "مسجد قباء", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        # 600
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 600, "text": "ما هي أطول سورة في القرآن الكريم؟", "answer": "سورة البقرة", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 600, "text": "كم عدد الآيات الكريمة في القرآن؟", "answer": "6236 آية", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 600, "text": "في أي سنة هجرية وُلد النبي محمد؟", "answer": "عام الفيل (قبل الهجرة بـ 53 سنة)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 600, "text": "ما هو اسم والد النبي إبراهيم؟", "answer": "آزر", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 600, "text": "في كم سنة أُنزل القرآن الكريم؟", "answer": "23 سنة", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 600, "text": "ما هو اسم الصحابي الذي جمع القرآن في مصحف؟", "answer": "سيدنا أبو بكر الصديق (بأمره) وزيد بن ثابت (الكاتب)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 600, "text": "كم غزوة شارك فيها النبي محمد شخصياً؟", "answer": "27 غزوة", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 600, "text": "ما هو اسم أم المؤمنين التي كانت أولى زوجات النبي؟", "answer": "السيدة خديجة", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 600, "text": "ما هو عدد كلمات القرآن الكريم تقريباً؟", "answer": "77,430 كلمة", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_islamic", "difficulty": 600, "text": "ما هو اسم الملك الموكل بالوحي؟", "answer": "جبريل عليه السلام", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        # ── اسلامي ────────────────────────────────────────────────────
+        q("cat_islamic",200,"كم ركن للإسلام؟","5"),
+        q("cat_islamic",200,"أول سورة في القرآن؟","الفاتحة"),
+        q("cat_islamic",200,"كم سورة في القرآن؟","114"),
+        q("cat_islamic",200,"شهر الصيام؟","رمضان"),
+        q("cat_islamic",200,"كم صلاة يومياً؟","5"),
+        q("cat_islamic",200,"اتجاه الصلاة؟","الكعبة"),
+        q("cat_islamic",200,"الكتاب المقدس للمسلمين؟","القرآن"),
+        q("cat_islamic",200,"عيد نهاية رمضان؟","عيد الفطر"),
+        q("cat_islamic",200,"مولد النبي؟","مكة المكرمة"),
+        q("cat_islamic",200,"كم أجزاء القرآن؟","30"),
+        q("cat_islamic",200,"أكبر عدد ركعات في صلاة؟","العشاء - 4 فرض"),
+        q("cat_islamic",200,"كم عدد أركان الإيمان؟","6"),
+        q("cat_islamic",200,"اليوم الذي رُفعت فيه الأعمال أسبوعياً؟","الجمعة"),
+        q("cat_islamic",200,"كم نبي ذُكر في القرآن؟","25"),
+        q("cat_islamic",200,"ماذا يقال عند الأكل؟","بسم الله"),
+        q("cat_islamic",400,"نسبة الزكاة؟","2.5%"),
+        q("cat_islamic",400,"كم ركعة في المغرب؟","3"),
+        q("cat_islamic",400,"أم المؤمنين الأولى؟","السيدة خديجة"),
+        q("cat_islamic",400,"أول مسجد بُني في الإسلام؟","مسجد قباء"),
+        q("cat_islamic",400,"كم آية في سورة البقرة؟","286"),
+        q("cat_islamic",400,"المدينة التي هاجر إليها النبي؟","المدينة المنورة"),
+        q("cat_islamic",400,"آخر سورة نزلت؟","سورة النصر"),
+        q("cat_islamic",400,"أطول سورة في القرآن؟","البقرة"),
+        q("cat_islamic",400,"من جمع القرآن أولاً؟","أبو بكر الصديق"),
+        q("cat_islamic",400,"كم سنة نزل القرآن؟","23"),
+        q("cat_islamic",400,"ليلة القدر أفضل من؟","ألف شهر"),
+        q("cat_islamic",400,"كم غزوة للنبي؟","27"),
+        q("cat_islamic",400,"من كتب القرآن في عهد الصديق؟","زيد بن ثابت"),
+        q("cat_islamic",400,"اليوم الذي نزل فيه القرآن؟","رمضان"),
+        q("cat_islamic",400,"ملك الوحي؟","جبريل"),
+        q("cat_islamic",600,"عدد آيات القرآن؟","6236"),
+        q("cat_islamic",600,"عدد كلمات القرآن؟","77,430"),
+        q("cat_islamic",600,"سنة الهجرة؟","622 م"),
+        q("cat_islamic",600,"والد النبي إبراهيم؟","آزر"),
+        q("cat_islamic",600,"أعمى بالخلق؟","النبي يعقوب (حزنا)"),
+        q("cat_islamic",600,"أول شهيد في الإسلام؟","سمية بنت خياط"),
+        q("cat_islamic",600,"كم سنة عاش النبي محمد؟","63 سنة"),
+        q("cat_islamic",600,"سنة وفاة النبي؟","632 م"),
+        q("cat_islamic",600,"معركة بدر في السنة؟","2 هجرية"),
+        q("cat_islamic",600,"كم ضربة دق قلب النبي؟","لا يُعلم بدقة"),
+        q("cat_islamic",600,"من هو ذو القرنين؟","ملك عادل ذُكر في القرآن"),
+        q("cat_islamic",600,"أكثر الأنبياء ذكراً في القرآن؟","موسى"),
+        q("cat_islamic",600,"كم سنة دام حكم عمر بن الخطاب؟","10 سنوات"),
+        q("cat_islamic",600,"من لقّب بأمين الأمة؟","أبو عبيدة بن الجراح"),
+        q("cat_islamic",600,"كم عدد المحارم للمرأة في الإسلام؟","محدد في الفقه الإسلامي"),
 
-        # ─── علوم بسيطة ───
-        # 200
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 200, "text": "ما هو الغاز الذي نتنفسه؟", "answer": "الأكسجين", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 200, "text": "كم عدد كواكب المجموعة الشمسية؟", "answer": "8 كواكب", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 200, "text": "ما هو أكبر كوكب في المجموعة الشمسية؟", "answer": "المشتري", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 200, "text": "من أين تأتي الطاقة للنباتات؟", "answer": "الشمس (الضوء)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 200, "text": "ما هو الكوكب الأقرب للشمس؟", "answer": "عطارد", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 200, "text": "ما هو الكوكب المعروف بالكوكب الأحمر؟", "answer": "المريخ", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 200, "text": "ما هو المكوّن الرئيسي للماء؟", "answer": "هيدروجين وأكسجين (H2O)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 200, "text": "ما هو الجهاز المسؤول عن الهضم في جسم الإنسان؟", "answer": "الجهاز الهضمي", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 200, "text": "ما هو أصغر كوكب في المجموعة الشمسية؟", "answer": "عطارد", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 200, "text": "ما هو اسم قوة الجذب التي تبقينا على الأرض؟", "answer": "الجاذبية", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        # 400
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 400, "text": "كم درجة حرارة غليان الماء؟", "answer": "100 درجة مئوية", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 400, "text": "ما هو الرمز الكيميائي للذهب؟", "answer": "Au", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 400, "text": "كم وحدة في الجدول الدوري؟", "answer": "118 عنصر", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 400, "text": "ما هو اسم العالم الذي اكتشف قانون الجاذبية؟", "answer": "إسحاق نيوتن", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 400, "text": "ما هو اسم الخلية الأساسية في جسم الإنسان؟", "answer": "الخلية", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 400, "text": "ما هي أسرع طيور العالم؟", "answer": "الصقر الحر (البريجون)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 400, "text": "ما هو الرمز الكيميائي للحديد؟", "answer": "Fe", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 400, "text": "ما هو العضو الذي ينقي الدم في جسم الإنسان؟", "answer": "الكلية", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 400, "text": "ما هو مصدر ضوء القمر؟", "answer": "انعكاس ضوء الشمس", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 400, "text": "ما هو الكوكب المعروف بحلقاته الجميلة؟", "answer": "زحل", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        # 600
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 600, "text": "ما هو الرمز الكيميائي للصوديوم؟", "answer": "Na", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 600, "text": "ما عدد أضلاع الجزيء الماء؟", "answer": "جزيء الماء H2O - لا أضلاع له، شكل زاوية", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 600, "text": "ما هي وحدة قياس الضغط الجوي؟", "answer": "الباسكال أو الضغط الجوي القياسي (atm)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 600, "text": "من هو العالم الذي اكتشف البنسلين؟", "answer": "ألكسندر فليمنج", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 600, "text": "ما هو اسم الخلايا المسؤولة عن مناعة الجسم؟", "answer": "كريات الدم البيضاء", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 600, "text": "ما هو العنصر الأكثر انتشاراً في القشرة الأرضية؟", "answer": "الأكسجين", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 600, "text": "ما هي النظرية التي تصف نشأة الكون؟", "answer": "نظرية الانفجار العظيم (Big Bang)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 600, "text": "ما هو الرمز الكيميائي للكربون؟", "answer": "C", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 600, "text": "ما هي وحدة قياس القوة في النظام الدولي؟", "answer": "النيوتن (N)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_science", "difficulty": 600, "text": "ما عدد أسنان الإنسان البالغ الكاملة؟", "answer": "32 سنة", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        # ── علوم بسيطة ───────────────────────────────────────────────
+        q("cat_science",200,"الغاز الذي نتنفسه؟","الأكسجين"),
+        q("cat_science",200,"كم كوكب في المجموعة الشمسية؟","8"),
+        q("cat_science",200,"أكبر كوكب؟","المشتري"),
+        q("cat_science",200,"طاقة النباتات؟","الشمس"),
+        q("cat_science",200,"أقرب كوكب للشمس؟","عطارد"),
+        q("cat_science",200,"الكوكب الأحمر؟","المريخ"),
+        q("cat_science",200,"تركيبة الماء؟","H₂O"),
+        q("cat_science",200,"الكوكب ذو الحلقات؟","زحل"),
+        q("cat_science",200,"أصغر كوكب؟","عطارد"),
+        q("cat_science",200,"الجاذبية تعمل بسبب؟","الكتلة"),
+        q("cat_science",200,"أين يوجد الدماغ؟","الرأس"),
+        q("cat_science",200,"اسم أول إنسان في الفضاء؟","يوري غاغارين"),
+        q("cat_science",200,"سرعة الصوت تقريباً؟","340 م/ثانية"),
+        q("cat_science",200,"كم قمر للمريخ؟","2"),
+        q("cat_science",200,"الذرة تتكون من؟","نيوترونات، بروتونات، إلكترونات"),
+        q("cat_science",400,"درجة غليان الماء؟","100"),
+        q("cat_science",400,"رمز الذهب؟","Au"),
+        q("cat_science",400,"كم عنصر في الجدول الدوري؟","118"),
+        q("cat_science",400,"اكتشف الجاذبية؟","نيوتن"),
+        q("cat_science",400,"رمز الحديد؟","Fe"),
+        q("cat_science",400,"العضو الذي ينقي الدم؟","الكلية"),
+        q("cat_science",400,"مصدر ضوء القمر؟","انعكاس الشمس"),
+        q("cat_science",400,"اكتشف البنسلين؟","ألكسندر فليمنج"),
+        q("cat_science",400,"وحدة قياس الضغط؟","الباسكال"),
+        q("cat_science",400,"الخلايا البيضاء وظيفتها؟","المناعة"),
+        q("cat_science",400,"رمز الصوديوم؟","Na"),
+        q("cat_science",400,"رمز الكربون؟","C"),
+        q("cat_science",400,"أبرد درجة ممكنة؟","الصفر المطلق (-273°C)"),
+        q("cat_science",400,"العنصر الأكثر في القشرة الأرضية؟","الأكسجين"),
+        q("cat_science",400,"اسم أول قمر صناعي؟","سبوتنيك"),
+        q("cat_science",600,"النظرية النسبية لـ؟","إينشتاين"),
+        q("cat_science",600,"نظرية نشأة الكون؟","الانفجار العظيم"),
+        q("cat_science",600,"وحدة قياس القوة؟","النيوتن"),
+        q("cat_science",600,"كم أسنان للبالغ؟","32"),
+        q("cat_science",600,"العلم الذي يدرس الأحافير؟","علم الحفريات"),
+        q("cat_science",600,"سرعة الضوء؟","300,000 كم/ثانية"),
+        q("cat_science",600,"الأثقل المعادن؟","الأوزميوم"),
+        q("cat_science",600,"رمز الزئبق؟","Hg"),
+        q("cat_science",600,"عدد الكروموسومات البشرية؟","46"),
+        q("cat_science",600,"أكبر عضو في الجسم؟","الجلد"),
+        q("cat_science",600,"دراسة الكون؟","علم الفلك"),
+        q("cat_science",600,"أسرع المخلوقات في البحر؟","سمكة الأبرة (سيلفيش)"),
+        q("cat_science",600,"الجهاز العصبي المركزي يتكون من؟","المخ والحبل الشوكي"),
+        q("cat_science",600,"أكثر سائل في الجسم؟","الماء"),
+        q("cat_science",600,"عمر الشمس تقريباً؟","4.6 مليار سنة"),
 
-        # ─── شعارات ───
-        # 200
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 200, "text": "شعار أي شركة هذا؟ (تفاحة ناقصة عضة)", "answer": "أبل (Apple)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 200, "text": "شعار أي شركة هذا؟ (حرف M أصفر على أحمر)", "answer": "ماكدونالدز", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 200, "text": "شعار أي شركة هذا؟ (علامة صح بيضاء)", "answer": "نايكي (Nike)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 200, "text": "شعار أي شركة هذا؟ (حورية البحر الخضراء)", "answer": "ستاربكس", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 200, "text": "شعار أي شركة هذا؟ (حرف G ملون)", "answer": "جوجل", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 200, "text": "شعار أي شركة هذا؟ (حروف fb)", "answer": "فيسبوك / ميتا", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 200, "text": "شعار أي شركة هذا؟ (طائر أزرق)", "answer": "تويتر (X)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 200, "text": "شعار أي شركة هذا؟ (أسهم متلوية حمراء)", "answer": "نتفليكس", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 200, "text": "شعار أي شركة هذا؟ (حرف A وسهم ابتسامة)", "answer": "أمازون", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 200, "text": "شعار أي شركة هذا؟ (ثلاث خطوط متوازية)", "answer": "أديداس", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        # 400
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 400, "text": "شعار أي شركة هذا؟ (حرف T أزرق وأبيض)", "answer": "تيك توك", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 400, "text": "شعار أي شركة هذا؟ (صواريخ وأجنحة زرقاء)", "answer": "تويتر الجديد (X)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 400, "text": "شعار أي شركة هذا؟ (خمس حلقات ملونة)", "answer": "الأولمبياد", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 400, "text": "شعار أي شركة هذا؟ (نجمة ثلاثية الأطراف داخل دائرة)", "answer": "مرسيدس", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 400, "text": "شعار أي شركة هذا؟ (مولود يجلس)", "answer": "ميشلان (الدودة البيضاء)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 400, "text": "شعار أي شركة سيارات هذا؟ (أربع حلقات متشابكة)", "answer": "أودي (Audi)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 400, "text": "شعار أي شركة هذا؟ (بومة بيضاء)", "answer": "تريباجو أو دواء", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 400, "text": "شعار أي شركة هذا؟ (رجل يقفز في دائرة حمراء)", "answer": "كانون", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 400, "text": "شعار أي تطبيق هذا؟ (كاميرا ملونة على خلفية)", "answer": "إنستغرام", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 400, "text": "شعار أي شركة هذا؟ (سيف عربي أخضر)", "answer": "stc", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        # 600
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 600, "text": "شعار أي شركة هذا؟ (حرف H داخل مربع أزرق)", "answer": "هيلتون للفنادق", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 600, "text": "شعار أي شركة هذا؟ (تمساح أخضر صغير)", "answer": "لاكوست (Lacoste)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 600, "text": "شعار أي شركة هذا؟ (دب أبيض صغير)", "answer": "باندا (شركة أوقاف)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 600, "text": "شعار أي شركة سيارات هذا؟ (فرس حر)", "answer": "فيراري", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 600, "text": "شعار أي شركة هذا؟ (حروف LV متداخلة)", "answer": "لويس فيتون", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 600, "text": "شعار أي شركة هذا؟ (مطرقة وشكل متماثل)", "answer": "ايكيا (IKEA)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 600, "text": "شعار أي شركة هذا؟ (يد تمسك كرة أرضية)", "answer": "فيزا (Visa)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 600, "text": "شعار أي شركة هذا؟ (نسر أبيض)", "answer": "تويوتا أو هوندا", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 600, "text": "شعار أي شركة هذا؟ (ثلاث خطوط متوازية زرقاء)", "answer": "سامسونج أو بيبسي", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_logos", "difficulty": 600, "text": "شعار أي شركة هذا؟ (نقطة صفراء)", "answer": "سناب شات (Snapchat)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        # ── شعارات ────────────────────────────────────────────────────
+        q("cat_logos",200,"شعار أي شركة؟ (تفاحة ناقصة)","أبل"),
+        q("cat_logos",200,"شعار أي شركة؟ (M أصفر)","ماكدونالدز"),
+        q("cat_logos",200,"شعار أي شركة؟ (علامة صح)","نايكي"),
+        q("cat_logos",200,"شعار أي شركة؟ (حورية البحر)","ستاربكس"),
+        q("cat_logos",200,"شعار أي شركة؟ (حرف G ملوّن)","جوجل"),
+        q("cat_logos",200,"شعار أي شركة؟ (حرف f أزرق)","فيسبوك"),
+        q("cat_logos",200,"شعار أي شركة؟ (طائر أزرق)","تويتر X"),
+        q("cat_logos",200,"شعار أي شركة؟ (N حمراء)","نتفليكس"),
+        q("cat_logos",200,"شعار أي شركة؟ (A وسهم)","أمازون"),
+        q("cat_logos",200,"شعار أي شركة؟ (3 خطوط)","أديداس"),
+        q("cat_logos",200,"شعار أي شركة؟ (كاميرا ملوّنة)","إنستغرام"),
+        q("cat_logos",200,"شعار أي شركة؟ (صاروخ أبيض)","تيك توك"),
+        q("cat_logos",200,"شعار أي شركة؟ (صفحة بيضاء)","يوتيوب"),
+        q("cat_logos",200,"شعار أي شركة؟ (p أرجواني)","بليستيشن"),
+        q("cat_logos",200,"شعار أي شركة؟ (خمس خطوط)","مرسيدس"),
+        q("cat_logos",400,"شعار أي شركة سيارات؟ (4 حلقات)","أودي"),
+        q("cat_logos",400,"شعار أي شركة؟ (نجمة 3 أطراف بدائرة)","مرسيدس"),
+        q("cat_logos",400,"شعار أي شركة؟ (5 حلقات ملوّنة)","الأولمبياد"),
+        q("cat_logos",400,"شعار أي شركة؟ (فرس طائر)","فيراري"),
+        q("cat_logos",400,"شعار أي شركة؟ (تمساح أخضر)","لاكوست"),
+        q("cat_logos",400,"شعار أي شركة؟ (حروف LV)","لويس فيتون"),
+        q("cat_logos",400,"شعار أي شركة؟ (أزرق مخطط)","سامسونج"),
+        q("cat_logos",400,"شعار أي شركة؟ (بومة صفراء)","سناب شات"),
+        q("cat_logos",400,"شعار أي شركة؟ (Δ أحمر)","مالبورو"),
+        q("cat_logos",400,"شعار أي شركة؟ (نقطة صفراء على زرقاء)","IKEA"),
+        q("cat_logos",400,"شعار أي شركة؟ (خلية نحل)","BBC"),
+        q("cat_logos",400,"شعار أي شركة؟ (مستطيل أخضر)","stc"),
+        q("cat_logos",400,"شعار أي شركة؟ (حرف W أزرق)","واتساب"),
+        q("cat_logos",400,"شعار أي شركة؟ (طيف ألوان)","مايكروسوفت"),
+        q("cat_logos",400,"شعار أي شركة؟ (S وخطوط)","سامسونج"),
+        q("cat_logos",600,"شعار أي شركة؟ (شمعة متقدة)","BP"),
+        q("cat_logos",600,"شعار أي شركة؟ (بتلة خضراء)","ستارباكس القديم"),
+        q("cat_logos",600,"شعار أي شركة؟ (حرف H مربع أزرق)","هيلتون"),
+        q("cat_logos",600,"شعار أي شركة؟ (نسر ذهبي)","فيزا"),
+        q("cat_logos",600,"شعار أي شركة؟ (دائرة حمراء فارغة)","Toyota"),
+        q("cat_logos",600,"شعار أي شركة؟ (علامة استفهام بيضاء)","?"),
+        q("cat_logos",600,"شعار أي شركة؟ (شريط موجي)","Pepsi"),
+        q("cat_logos",600,"شعار أي شركة؟ (حرف E متشابك)","Etsy"),
+        q("cat_logos",600,"شعار أي شركة؟ (ساعة رقمية حمراء)","Casio"),
+        q("cat_logos",600,"شعار أي شركة؟ (ارنب أبيض)","Playboy"),
+        q("cat_logos",600,"شعار أي شركة؟ (شراع أزرق)","Samsung Galaxy"),
+        q("cat_logos",600,"شعار أي شركة؟ (حرف Z أصفر)","Zara"),
+        q("cat_logos",600,"شعار أي شركة؟ (شكل مثمن أزرق)","Allianz"),
+        q("cat_logos",600,"شعار أي شركة؟ (ثلاث دوائر متداخلة)","Audi"),
+        q("cat_logos",600,"شعار أي شركة؟ (نقطة حمراء صغيرة)","Vodafone"),
 
-        # ─── ولا كلمة ───
-        # 200
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 200, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "بيت", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 200, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "سيارة", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 200, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "شجرة", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 200, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "ماء", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 200, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "شمس", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 200, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "طيارة", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 200, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "كتاب", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 200, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "قلم", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 200, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "باب", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 200, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "تلفون", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        # 400
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 400, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "مطار", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 400, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "مسبح", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 400, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "برج إيفل", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 400, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "دكتور", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 400, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "ثلج", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 400, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "تنين", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 400, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "صحراء", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 400, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "رياضة", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 400, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "موسيقى", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 400, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "مستشفى", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        # 600
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 600, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "برلمان", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 600, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "جامعة", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 600, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "فيلسوف", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 600, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "انتخابات", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 600, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "ميكروسكوب", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 600, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "مستكشف", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 600, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "اقتصاد", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 600, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "تلسكوب", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 600, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "محكمة", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
-        {"id": str(uuid.uuid4()), "category_id": "cat_word", "difficulty": 600, "text": "وصّف هذي الكلمة لفريقك بدون ما تقولها!", "answer": "دبلوماسي", "image_url": "", "answer_image_url": "", "question_type": "secret_word", "created_at": datetime.now(timezone.utc).isoformat()},
+        # ── ولا كلمة ──────────────────────────────────────────────────
+        q("cat_word",200,"وصّف الكلمة لفريقك!","بيت",qtype="secret_word"),
+        q("cat_word",200,"وصّف الكلمة لفريقك!","سيارة",qtype="secret_word"),
+        q("cat_word",200,"وصّف الكلمة لفريقك!","شجرة",qtype="secret_word"),
+        q("cat_word",200,"وصّف الكلمة لفريقك!","ماء",qtype="secret_word"),
+        q("cat_word",200,"وصّف الكلمة لفريقك!","شمس",qtype="secret_word"),
+        q("cat_word",200,"وصّف الكلمة لفريقك!","طيارة",qtype="secret_word"),
+        q("cat_word",200,"وصّف الكلمة لفريقك!","كتاب",qtype="secret_word"),
+        q("cat_word",200,"وصّف الكلمة لفريقك!","قلم",qtype="secret_word"),
+        q("cat_word",200,"وصّف الكلمة لفريقك!","باب",qtype="secret_word"),
+        q("cat_word",200,"وصّف الكلمة لفريقك!","تلفون",qtype="secret_word"),
+        q("cat_word",200,"وصّف الكلمة لفريقك!","قهوة",qtype="secret_word"),
+        q("cat_word",200,"وصّف الكلمة لفريقك!","مطر",qtype="secret_word"),
+        q("cat_word",200,"وصّف الكلمة لفريقك!","كلب",qtype="secret_word"),
+        q("cat_word",200,"وصّف الكلمة لفريقك!","قطة",qtype="secret_word"),
+        q("cat_word",200,"وصّف الكلمة لفريقك!","جبال",qtype="secret_word"),
+        q("cat_word",400,"وصّف الكلمة لفريقك!","مطار",qtype="secret_word"),
+        q("cat_word",400,"وصّف الكلمة لفريقك!","مسبح",qtype="secret_word"),
+        q("cat_word",400,"وصّف الكلمة لفريقك!","برج إيفل",qtype="secret_word"),
+        q("cat_word",400,"وصّف الكلمة لفريقك!","دكتور",qtype="secret_word"),
+        q("cat_word",400,"وصّف الكلمة لفريقك!","ثلج",qtype="secret_word"),
+        q("cat_word",400,"وصّف الكلمة لفريقك!","صحراء",qtype="secret_word"),
+        q("cat_word",400,"وصّف الكلمة لفريقك!","موسيقى",qtype="secret_word"),
+        q("cat_word",400,"وصّف الكلمة لفريقك!","مستشفى",qtype="secret_word"),
+        q("cat_word",400,"وصّف الكلمة لفريقك!","كعبة",qtype="secret_word"),
+        q("cat_word",400,"وصّف الكلمة لفريقك!","ملعب",qtype="secret_word"),
+        q("cat_word",400,"وصّف الكلمة لفريقك!","تلفزيون",qtype="secret_word"),
+        q("cat_word",400,"وصّف الكلمة لفريقك!","رحلة",qtype="secret_word"),
+        q("cat_word",400,"وصّف الكلمة لفريقك!","مطبخ",qtype="secret_word"),
+        q("cat_word",400,"وصّف الكلمة لفريقك!","شاطئ",qtype="secret_word"),
+        q("cat_word",400,"وصّف الكلمة لفريقك!","قلعة",qtype="secret_word"),
+        q("cat_word",600,"وصّف الكلمة لفريقك!","برلمان",qtype="secret_word"),
+        q("cat_word",600,"وصّف الكلمة لفريقك!","جامعة",qtype="secret_word"),
+        q("cat_word",600,"وصّف الكلمة لفريقك!","فيلسوف",qtype="secret_word"),
+        q("cat_word",600,"وصّف الكلمة لفريقك!","انتخابات",qtype="secret_word"),
+        q("cat_word",600,"وصّف الكلمة لفريقك!","ميكروسكوب",qtype="secret_word"),
+        q("cat_word",600,"وصّف الكلمة لفريقك!","اقتصاد",qtype="secret_word"),
+        q("cat_word",600,"وصّف الكلمة لفريقك!","تلسكوب",qtype="secret_word"),
+        q("cat_word",600,"وصّف الكلمة لفريقك!","محكمة",qtype="secret_word"),
+        q("cat_word",600,"وصّف الكلمة لفريقك!","دبلوماسي",qtype="secret_word"),
+        q("cat_word",600,"وصّف الكلمة لفريقك!","ثورة",qtype="secret_word"),
+        q("cat_word",600,"وصّف الكلمة لفريقك!","استعمار",qtype="secret_word"),
+        q("cat_word",600,"وصّف الكلمة لفريقك!","نووي",qtype="secret_word"),
+        q("cat_word",600,"وصّف الكلمة لفريقك!","فوضى",qtype="secret_word"),
+        q("cat_word",600,"وصّف الكلمة لفريقك!","مستكشف",qtype="secret_word"),
+        q("cat_word",600,"وصّف الكلمة لفريقك!","ديمقراطية",qtype="secret_word"),
+
+        # ── ثقافة شعبية ───────────────────────────────────────────────
+        q("cat_culture",200,"وش اسم أشهر مسلسل كوميدي سعودي؟","طاش ما طاش"),
+        q("cat_culture",200,"وش اسم أول فيلم سعودي عُرض في دور السينما؟","وجدة"),
+        q("cat_culture",200,"في أي سنة عادت السينما للسعودية؟","2018"),
+        q("cat_culture",200,"وش اسم أشهر برنامج رمضاني يجمع الفنانين؟","أرامكو / MBC"),
+        q("cat_culture",200,"من هو مقدم برنامج رامز جلال الشهير؟","رامز جلال"),
+        q("cat_culture",200,"وش اسم أشهر مسلسل تركي في العالم العربي؟","قيامة أرطغرل"),
+        q("cat_culture",200,"وش اسم الفيلم الذي شارك فيه ليوناردو ديكابريو في جزيرة؟","لاس ايلاند / Shutter Island"),
+        q("cat_culture",200,"وش اسم سلسلة أفلام الخارق الشهيرة؟","Marvel / أفنجرز"),
+        q("cat_culture",200,"وش اسم أشهر مسلسل أمريكي عن العائلة السوداء؟","Fresh Prince"),
+        q("cat_culture",200,"وش أشهر منصة بث عربية؟","Shahid / شاهد"),
+        q("cat_culture",200,"وش اسم أشهر برنامج مسابقات غنائي عربي؟","Arab Idol"),
+        q("cat_culture",200,"وش اسم الشخصية الرئيسية في فيلم الأسد الملك؟","سيمبا"),
+        q("cat_culture",200,"وش اسم أشهر فيلم كرتوني عن سمكة؟","Finding Nemo"),
+        q("cat_culture",200,"وش اسم مسلسل الأطباء الشهير؟","Grey's Anatomy / دكتور هاوس"),
+        q("cat_culture",200,"وش اسم بطل فيلم Spider-Man؟","بيتر باركر"),
+        q("cat_culture",400,"وش اسم مخرج فيلم Inception؟","كريستوفر نولان"),
+        q("cat_culture",400,"وش اسم أغنى شخص في مسلسل Money Heist؟","البروفيسور"),
+        q("cat_culture",400,"في أي بلد صُوِّر مسلسل قيامة أرطغرل؟","تركيا"),
+        q("cat_culture",400,"وش اسم سلسلة أفلام الوحش الغريب الشهيرة؟","Jurassic Park"),
+        q("cat_culture",400,"وش اسم فريق كرة اللعبة في فيلم Space Jam؟","Tune Squad"),
+        q("cat_culture",400,"من قدّم The Voice Arabia في أول موسم؟","عمرو دياب + كاظم الساهر"),
+        q("cat_culture",400,"وش اسم مسلسل الزومبي الأمريكي الشهير؟","The Walking Dead"),
+        q("cat_culture",400,"وش اسم أشهر مسلسل كوميدي أمريكي عن الأصدقاء؟","Friends"),
+        q("cat_culture",400,"وش اسم أشهر مسلسل سعودي خيال علمي؟","النهاية"),
+        q("cat_culture",400,"كم جزء لسلسلة Fast and Furious حتى 2024؟","11 جزء"),
+        q("cat_culture",400,"من يلعب دور Iron Man في أفلام Marvel؟","روبرت داوني جونيور"),
+        q("cat_culture",400,"وش اسم قناة الأطفال السعودية الشهيرة؟","MBC3"),
+        q("cat_culture",400,"وش اسم أشهر مسلسل جريمة دنماركي؟","The Killing / Borgen"),
+        q("cat_culture",400,"وش اسم برنامج الطبخ السعودي الشهير؟","عالم أنوشة"),
+        q("cat_culture",400,"وش اسم الممثل البطل في فيلم Titanic؟","ليوناردو ديكابريو"),
+        q("cat_culture",600,"كم حلقة في Game of Thrones بالكامل؟","73 حلقة"),
+        q("cat_culture",600,"وش اسم المخرج الياباني لـ Spirited Away؟","هاياو مياغي"),
+        q("cat_culture",600,"وش اسم أشهر مسلسل كوري دراما؟","Crash Landing on You"),
+        q("cat_culture",600,"وش اسم أول فيلم Disney باللغة العربية الكاملة؟","أبو دنياه"),
+        q("cat_culture",600,"وش اسم مكان التصوير الرئيسي لـ Game of Thrones؟","مالطا وإيرلندا الشمالية"),
+        q("cat_culture",600,"من أخرج سلسلة Lord of the Rings؟","بيتر جاكسون"),
+        q("cat_culture",600,"وش اسم أكثر مسلسل مشاهدةً في تاريخ Netflix؟","Wednesday"),
+        q("cat_culture",600,"وش اسم برنامج Survivor العربي؟","المليون"),
+        q("cat_culture",600,"وش اسم أول فيلم حصل على أوسكار من العالم العربي؟","Z"),
+        q("cat_culture",600,"كم جزء لسلسلة Harry Potter الرئيسية؟","8"),
+        q("cat_culture",600,"وش اسم أكثر فيلم إيرادات في التاريخ؟","Avatar"),
+        q("cat_culture",600,"وش اسم مخرج فيلم Avengers Endgame؟","Anthony & Joe Russo"),
+        q("cat_culture",600,"وش اسم بطلة فيلم Hunger Games؟","كاتنيس إيفردين"),
+        q("cat_culture",600,"في أي سنة صدر أول فيلم Toy Story؟","1995"),
+        q("cat_culture",600,"وش اسم الفيلم الذي يمثّل فيه وِيل سميث ملاكم؟","Ali"),
+
+        # ── رياضة ─────────────────────────────────────────────────────
+        q("cat_sports",200,"كم لاعب في فريق كرة القدم؟","11"),
+        q("cat_sports",200,"كم هدف فاز به المنتخب السعودي على الأرجنتين 2022؟","2-1"),
+        q("cat_sports",200,"في أي دولة أُقيم كأس العالم 2022؟","قطر"),
+        q("cat_sports",200,"من فاز بكأس العالم 2022؟","الأرجنتين"),
+        q("cat_sports",200,"أشهر لاعب كرة قدم في العالم؟","رونالدو / ميسي"),
+        q("cat_sports",200,"أي نادي يلعب فيه رونالدو في السعودية؟","النصر"),
+        q("cat_sports",200,"ما رقم قميص رونالدو المشهور؟","7"),
+        q("cat_sports",200,"من فاز بكأس العالم أكثر مرة؟","البرازيل (5 مرات)"),
+        q("cat_sports",200,"كم دقيقة المباراة الأصلية؟","90"),
+        q("cat_sports",200,"أول بطولة آسيا للأندية فاز بها نادي سعودي؟","الهلال"),
+        q("cat_sports",200,"كم مرة فاز الهلال بالدوري السعودي؟","أكثر من 18 مرة"),
+        q("cat_sports",200,"ما الرياضة التي تستخدم رقعة الشطرنج؟","الشطرنج"),
+        q("cat_sports",200,"كم لاعب في فريق كرة السلة؟","5"),
+        q("cat_sports",200,"كم أشواط في مباراة تنس؟","3 أو 5"),
+        q("cat_sports",200,"مَن صاحب أكثر ميداليات أولمبية؟","مايكل فيلبس"),
+        q("cat_sports",400,"من فاز بكأس العالم للأندية 2023؟","Manchester City"),
+        q("cat_sports",400,"كم فريق في دوري أبطال أوروبا؟","32 فريق"),
+        q("cat_sports",400,"أي نادي سعودي يلعب فيه نيمار؟","الهلال"),
+        q("cat_sports",400,"أول دولة عربية تستضيف كأس العالم؟","قطر"),
+        q("cat_sports",400,"أين تقع بطولة ويمبلدون؟","لندن، إنجلترا"),
+        q("cat_sports",400,"من حمل راية السعودية في أولمبياد 2024؟","طارق حامدي"),
+        q("cat_sports",400,"كم دولة تشارك في كأس العالم 2026؟","48"),
+        q("cat_sports",400,"من فاز بأكثر كؤوس تشامبيونز؟","ريال مدريد"),
+        q("cat_sports",400,"ما الفرق بين الجودو والكاراتيه؟","الجودو رياضة مصارعة، الكاراتيه ضربات"),
+        q("cat_sports",400,"أين أُقيمت أولمبياد 2024؟","باريس"),
+        q("cat_sports",400,"من فاز ببطولة الفورمولا 1 أكثر مرات؟","لويس هاملتون (7 مرات)"),
+        q("cat_sports",400,"أي فريق فاز بأكثر دوريات كأس السوبر السعودي؟","الهلال"),
+        q("cat_sports",400,"أشهر سباق دراجات في العالم؟","Tour de France"),
+        q("cat_sports",400,"كم أمتار في سباق 100 م؟","100"),
+        q("cat_sports",400,"من يحمل لقب الأقوى رجل في العالم؟","بطل World's Strongest Man"),
+        q("cat_sports",600,"في أي سنة أُسِّس نادي الهلال السعودي؟","1957"),
+        q("cat_sports",600,"أول سعودي يفوز بميدالية أولمبية؟","هاشم الحسن 1984"),
+        q("cat_sports",600,"من يحمل رقم الأهداف الأعلى في تاريخ كأس العالم؟","رونالدو البرازيلي (15 هدف)"),
+        q("cat_sports",600,"أي دولة فازت بأكثر ميداليات أولمبية تاريخياً؟","أمريكا"),
+        q("cat_sports",600,"من هو مدرب المنتخب السعودي في كأس العالم 2022؟","هيرفي رينار"),
+        q("cat_sports",600,"في أي سنة مشاركة السعودية الأولى في كأس العالم؟","1994"),
+        q("cat_sports",600,"ما اسم أكبر ملعب في السعودية؟","ملعب الملك فهد الدولي"),
+        q("cat_sports",600,"من فاز ببطولة NBA أكثر مرة؟","بوسطن سيلتيكس"),
+        q("cat_sports",600,"كم دولة في كأس الخليج العربي؟","6"),
+        q("cat_sports",600,"من أسرع عداء في التاريخ؟","أوسين بولت"),
+        q("cat_sports",600,"كم مرة فاز الاتحاد ببطولة دوري أبطال آسيا؟","مرتين"),
+        q("cat_sports",600,"أين يقع ملعب Camp Nou؟","برشلونة، إسبانيا"),
+        q("cat_sports",600,"من يلعب دور الحارس في كرة القدم؟","حارس المرمى"),
+        q("cat_sports",600,"في أي سنة أسس نادي الاتحاد السعودي؟","1927"),
+        q("cat_sports",600,"من فاز بكأس العالم 2018؟","فرنسا"),
+
+        # ── موسيقى وفن ────────────────────────────────────────────────
+        q("cat_music",200,"من هو المطرب السعودي الأشهر؟","محمد عبده"),
+        q("cat_music",200,"من هو فنان العرب؟","محمد عبده"),
+        q("cat_music",200,"أغنية رابح صقر الأشهر؟","يا ليل / وليد الشامي"),
+        q("cat_music",200,"أي مطرب لقّب بكوكب الشرق؟","أم كلثوم"),
+        q("cat_music",200,"وش اسم أغنية عمرو دياب الأشهر؟","حبيبي يا نور عيني"),
+        q("cat_music",200,"من غنى أغنية Shape of You؟","Ed Sheeran"),
+        q("cat_music",200,"أي تطبيق يُستخدم لاكتشاف اسم الأغنية؟","Shazam"),
+        q("cat_music",200,"كم وتر في الجيتار الكلاسيكي؟","6"),
+        q("cat_music",200,"من هو ملك البوب العالمي؟","مايكل جاكسون"),
+        q("cat_music",200,"أشهر أغنية في فيلم Titanic؟","My Heart Will Go On"),
+        q("cat_music",200,"أشهر مغني راب عربي؟","فريدي / عمر سليمان"),
+        q("cat_music",200,"أشهر مطربة خليجية؟","أحلام / نوال الكويتية"),
+        q("cat_music",200,"وش اسم مجموعة الأغاني الأشهر ببريطانيا؟","The Beatles"),
+        q("cat_music",200,"من هو بوزيقي صاحب الكمان الأشهر؟","مصطفى الكرد"),
+        q("cat_music",200,"وش اسم مسابقة الأغاني الأوروبية؟","Eurovision"),
+        q("cat_music",400,"وش اسم ألبوم مايكل جاكسون الأشهر؟","Thriller"),
+        q("cat_music",400,"من هو مؤلف أوبرا Rigoletto؟","فيردي"),
+        q("cat_music",400,"وش اسم مطرب Save Your Tears؟","The Weeknd"),
+        q("cat_music",400,"كم طبقة في الصوت البشري؟","4 رئيسية (سوبرانو، ألتو، تينور، باص)"),
+        q("cat_music",400,"أي بلد يُعدّ مهد موسيقى الجاز؟","أمريكا (نيو أورليانز)"),
+        q("cat_music",400,"وش اسم أغنية فيروز الأشهر؟","سألوني الناس"),
+        q("cat_music",400,"وش اسم المطرب السعودي الشاب الأشهر؟","ماجد المهندس / رابح صقر"),
+        q("cat_music",400,"من غنى أغنية Someone Like You؟","Adele"),
+        q("cat_music",400,"وش اسم جهاز عزف الموسيقى الكلاسيكية بـ 88 مفتاح؟","البيانو"),
+        q("cat_music",400,"في أي سنة تأسست مجموعة BTS؟","2013"),
+        q("cat_music",400,"وش اسم أغنية عبدالمجيد عبدالله الأشهر؟","لا تسأل"),
+        q("cat_music",400,"أشهر مطربة في تاريخ أمريكا؟","Whitney Houston / Mariah Carey"),
+        q("cat_music",400,"وش اسم مطرب YMCA؟","Village People"),
+        q("cat_music",400,"من هو صاحب أغنية Blinding Lights؟","The Weeknd"),
+        q("cat_music",400,"وش اسم الآلة الموسيقية العربية بوتر؟","العود"),
+        q("cat_music",600,"وش اسم السيمفونية رقم 9 لبيتهوفن؟","Ode to Joy"),
+        q("cat_music",600,"في أي سنة توفي مايكل جاكسون؟","2009"),
+        q("cat_music",600,"وش اسم أغنية النشيد الوطني السعودي؟","النشيد الوطني السعودي (عاشت الملك)"),
+        q("cat_music",600,"من مؤلف سيمفونية القدر؟","بيتهوفن"),
+        q("cat_music",600,"وش اسم الجائزة الموسيقية الكبرى في أمريكا؟","Grammy"),
+        q("cat_music",600,"وش اسم أكثر أغنية مشاهدةً في YouTube؟","Baby Shark"),
+        q("cat_music",600,"من هو أكثر فنان بيعاً في تاريخ الموسيقى؟","مايكل جاكسون"),
+        q("cat_music",600,"وش اسم أول نشيد وطني مسجّل صوتياً في التاريخ؟","النشيد البريطاني"),
+        q("cat_music",600,"في أي سنة تأسست دار الأوبرا في دبي؟","2016"),
+        q("cat_music",600,"من مؤلف الموزارت؟","والد ليوبولد موتسارت - هو نفسه مؤلف"),
+        q("cat_music",600,"وش اسم مطرب أغنية Bohemian Rhapsody؟","Freddie Mercury / Queen"),
+        q("cat_music",600,"كم مرة فازت Adele بجائزة Grammy؟","15 مرة"),
+        q("cat_music",600,"من هو المطرب الكوري الأكثر متابعةً؟","BTS"),
+        q("cat_music",600,"وش اسم أداة الموسيقى التقليدية السعودية؟","الدف والمزمار"),
+        q("cat_music",600,"في أي سنة صدر ألبوم Thriller؟","1982"),
     ]
 
     await db.questions.insert_many(questions)
-    return {"message": f"تم إضافة {len(categories)} فئة و {len(questions)} سؤال"}
+    total_q = len(questions)
+    total_c = len(categories)
+    return {"message": f"تم إضافة {total_c} فئة و {total_q} سؤال"}
 
-# ─── Root ─────────────────────────────────────────────────────────────────────
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ROOT
+# ══════════════════════════════════════════════════════════════════════════════
 
 @api_router.get("/")
 async def root():
-    return {"message": "Hujjah API - حُجّة"}
+    return {"message": "Hujjah API v2 – حُجّة", "version": "2.0"}
 
 app.include_router(api_router)
 app.add_middleware(
