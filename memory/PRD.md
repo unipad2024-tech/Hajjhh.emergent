@@ -72,10 +72,9 @@ HUJJAH is a competitive team trivia social game for Saudi gatherings, now transf
 - 450 Questions seeded: 45 per category (15 per difficulty × 3 difficulties)
 - Short answers: "7" not "7 أيام"
 
-### Testing (Iteration 4 - 2026-03-10 - v4 Major Update)
-- Backend: 100% (9/9 tests)
+### Testing (Iteration 5 - 2026-03-10 - TV Redesign)
 - Frontend: 100% (11/11 features)
-- Fixed: 36-tile board, real images, free user lock, TV-style question, SAR pricing
+- Redesign verified: 2×3 grid, 300/600/900, warm bg, real images, SAR pricing
 
 ## Environment Variables
 - Backend: MONGO_URL, DB_NAME, CORS_ORIGINS, JWT_SECRET_KEY, ADMIN_PASSWORD, STRIPE_API_KEY
