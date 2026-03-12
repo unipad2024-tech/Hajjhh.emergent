@@ -118,6 +118,11 @@ HUJJAH is a competitive team trivia social game for Saudi gatherings, now transf
 - [x] Image file upload system (PNG/JPG/WEBP, max 5MB)
 - [x] Category full CRUD (Create/Edit/Delete with image upload)
 - [x] Settings tab in Admin dashboard
+- [x] AI Question Generator tab in Admin (Gemini 3 Flash) - requires LLM balance
+- [x] Turn system: currentTurn indicator in GameBoardPage (دور فريق X)
+- [x] Team answer buttons enlarged (2x size) in QuestionPage
+- [x] Homepage cleaned: removed categories grid, replaced Arabic numerals ١٢٣ with 1,2,3
+- [x] Trial Mode Control in Settings tab: admin selects free categories via checkboxes
 
 ### P1 (High priority - next)
 - [ ] Generate 1000+ questions via AI (currently 450)
