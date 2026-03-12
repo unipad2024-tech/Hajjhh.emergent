@@ -4,13 +4,19 @@ import { useGame } from "@/context/GameContext";
 import { QRCodeSVG } from "qrcode.react";
 import { toast } from "sonner";
 
-const TIMER_DURATION = 75;
-
 export default function QuestionPage() {
   const navigate = useNavigate();
   const { state } = useLocation();
-  const { session, updateScore } = useGame();
+  const { session, updateScore, gameSettings } = useGame();
   const { question, catName, slot } = state || {};
+
+  // ─── Determine timer duration from settings ───────────────────────────────
+  const isWordCat = question?.category_id === "cat_word" || question?.question_type === "secret_word";
+  const diff      = question?.difficulty || 300;
+  let TIMER_DURATION = gameSettings?.default_timer || 65;
+  if (isWordCat && gameSettings?.word_timers) {
+    TIMER_DURATION = gameSettings.word_timers[String(diff)] ?? TIMER_DURATION;
+  }
 
   const [timeLeft, setTimeLeft]       = useState(TIMER_DURATION);
   const [timerOn, setTimerOn]         = useState(true);

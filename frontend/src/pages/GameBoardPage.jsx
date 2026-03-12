@@ -7,23 +7,37 @@ import { toast } from "sonner";
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 const DIFFICULTIES = [300, 600, 900];
 
-/* ── Warm olive/beige board palette ── */
-const BOARD_BG   = "linear-gradient(155deg, #F3EBD3 0%, #E4D9BB 35%, #C7D3A4 70%, #B5C592 100%)";
-const CARD_BG    = "rgba(255,255,255,0.82)";
-const CARD_BORDER= "rgba(0,0,0,0.07)";
-const TEXT_DARK  = "#2C3A1A";
-
-/* point → button accent color */
-const DIFF_COLOR = {
-  300: { bg: "linear-gradient(145deg,#2E7D32,#43A047)", shadow: "rgba(46,125,50,0.45)", label: "text-emerald-100" },
-  600: { bg: "linear-gradient(145deg,#E65100,#FB8C00)", shadow: "rgba(230,81,0,0.45)",  label: "text-orange-100" },
-  900: { bg: "linear-gradient(145deg,#B71C1C,#E53935)", shadow: "rgba(183,28,28,0.45)", label: "text-red-100" },
+/* ── Color palettes ── */
+const LIGHT = {
+  boardBg:   "linear-gradient(155deg, #F3EBD3 0%, #E4D9BB 35%, #C7D3A4 70%, #B5C592 100%)",
+  cardBg:    "rgba(255,255,255,0.88)",
+  cardBorder:"rgba(0,0,0,0.07)",
+  textMain:  "#2C3A1A",
+  textSub:   "#5A6A3A",
+  scoreBg:   "rgba(44,58,26,0.92)",
+  scoreBorder:"rgba(199,211,164,0.25)",
+};
+const DARK = {
+  boardBg:   "linear-gradient(155deg, #1A2B18 0%, #1C2E1A 35%, #1F3020 70%, #172715 100%)",
+  cardBg:    "rgba(28,42,26,0.95)",
+  cardBorder:"rgba(120,170,90,0.18)",
+  textMain:  "#C7D3A4",
+  textSub:   "#8AAA68",
+  scoreBg:   "rgba(10,20,8,0.95)",
+  scoreBorder:"rgba(120,170,90,0.2)",
 };
 
-function ScoreCounter({ value }) {
+/* ── Score button colors (warm gold palette) ── */
+const DIFF_STYLE = {
+  300: { bg: "linear-gradient(145deg,#B8860B,#E8C026)", shadow: "rgba(184,134,11,0.55)", darkBg: "linear-gradient(145deg,#9A7010,#C4A01E)" },
+  600: { bg: "linear-gradient(145deg,#8B4513,#CD7B3A)", shadow: "rgba(139,69,19,0.55)",  darkBg: "linear-gradient(145deg,#7A3A0F,#B06A2E)" },
+  900: { bg: "linear-gradient(145deg,#5B0E14,#9A1E28)", shadow: "rgba(91,14,20,0.55)",   darkBg: "linear-gradient(145deg,#4A0A10,#801820)" },
+};
+
+function ScoreCounter({ value, dark }) {
   const [display, setDisplay] = useState(value);
   const prev = useRef(value);
-  const [pop, setPop]   = useState(false);
+  const [pop, setPop] = useState(false);
 
   useEffect(() => {
     if (value === prev.current) return;
@@ -40,7 +54,8 @@ function ScoreCounter({ value }) {
   }, [value]);
 
   return (
-    <span className={`font-black tabular-nums transition-transform inline-block ${pop ? "scale-125" : ""}`}>
+    <span className={`font-black tabular-nums inline-block transition-transform ${pop ? "scale-125" : ""}`}
+      style={{ color: "#F1E194" }}>
       {display}
     </span>
   );
@@ -63,9 +78,9 @@ function fireConfetti() {
   }
 }
 
-/* ── Score button inside a category block ── */
-function ScoreBtn({ catId, diff, slot, used, clicking, onClick }) {
-  const dc  = DIFF_COLOR[diff];
+/* ── Score Button ── */
+function ScoreBtn({ catId, diff, slot, used, clicking, onClick, dark }) {
+  const ds  = DIFF_STYLE[diff];
   const key = `${catId}_${diff}_${slot}`;
   const isClicking = clicking === key;
 
@@ -77,15 +92,18 @@ function ScoreBtn({ catId, diff, slot, used, clicking, onClick }) {
       className={`
         w-full rounded-full font-black text-center select-none transition-all duration-150
         ${used
-          ? "opacity-25 cursor-default bg-gray-300 text-gray-500"
+          ? "opacity-20 cursor-default"
           : "hover:scale-110 active:scale-95 cursor-pointer hover:-translate-y-0.5"}
       `}
       style={{
-        background: used ? undefined : dc.bg,
-        boxShadow: used ? "none" : `0 4px 12px ${dc.shadow}, 0 1px 4px rgba(0,0,0,0.15)`,
-        padding: "clamp(4px,1vh,10px) clamp(6px,1vw,14px)",
-        fontSize: "clamp(0.75rem, 1.8vw, 1.15rem)",
-        color: used ? undefined : "white",
+        background: used ? (dark ? "rgba(100,120,80,0.2)" : "#d1c9b5") : (dark ? ds.darkBg : ds.bg),
+        boxShadow: used ? "none" : `0 5px 14px ${ds.shadow}, 0 2px 6px rgba(0,0,0,0.2)`,
+        padding: "clamp(6px,1.2vh,14px) clamp(4px,0.8vw,10px)",
+        fontSize: "clamp(1.1rem, 2.8vw, 2.1rem)",
+        color: used ? (dark ? "rgba(140,160,100,0.35)" : "rgba(80,80,60,0.35)") : "white",
+        letterSpacing: "-0.02em",
+        lineHeight: 1,
+        border: used ? "none" : "1px solid rgba(255,255,255,0.2)",
       }}
     >
       {isClicking ? "⏳" : used ? "✓" : diff}
@@ -93,33 +111,33 @@ function ScoreBtn({ catId, diff, slot, used, clicking, onClick }) {
   );
 }
 
-/* ── Single category card ── */
-function CategoryCard({ cat, session, usedTiles, clickingTile, onTileClick }) {
-  const t1Cats = session?.team1_categories || [];
-  const isT1   = t1Cats.includes(cat.id);
+/* ── Category Card ── */
+function CategoryCard({ cat, session, usedTiles, clickingTile, onTileClick, dark }) {
+  const P = dark ? DARK : LIGHT;
+  const t1Cats   = session?.team1_categories || [];
+  const isT1     = t1Cats.includes(cat.id);
   const teamName = isT1 ? session?.team1_name : session?.team2_name;
   const teamColor= isT1 ? "#ef4444" : "#3b82f6";
 
   return (
     <div
-      className="rounded-2xl flex flex-col overflow-hidden transition-shadow duration-300"
+      className="rounded-2xl flex flex-col overflow-hidden transition-all duration-300"
       style={{
-        background: CARD_BG,
-        border: `2.5px solid ${CARD_BORDER}`,
-        boxShadow: "0 4px 20px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.05)",
+        background: P.cardBg,
+        border: `2px solid ${P.cardBorder}`,
+        boxShadow: dark
+          ? "0 4px 20px rgba(0,0,0,0.4), 0 1px 4px rgba(0,0,0,0.3)"
+          : "0 4px 20px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.05)",
       }}
     >
       {/* Team indicator strip */}
-      <div
-        className="h-1.5 w-full shrink-0"
-        style={{ background: teamColor, opacity: 0.7 }}
-      />
+      <div className="h-1.5 w-full shrink-0" style={{ background: teamColor, opacity: 0.8 }} />
 
-      {/* Main content: [left buttons | center image | right buttons] */}
-      <div className="flex-1 flex flex-row items-center gap-2 px-2 py-2">
+      {/* Content: [left buttons | center image | right buttons] */}
+      <div className="flex-1 flex flex-row items-stretch gap-1.5 px-1.5 py-2">
 
-        {/* Left buttons (slot 1 = Team A) */}
-        <div className="flex flex-col gap-1.5 shrink-0" style={{ minWidth: "clamp(48px,7vw,80px)" }}>
+        {/* Left column: slot 1 buttons */}
+        <div className="flex flex-col justify-around gap-1.5 shrink-0" style={{ minWidth: "clamp(55px,9vw,110px)" }}>
           {DIFFICULTIES.map(diff => (
             <ScoreBtn
               key={`${cat.id}_${diff}_1`}
@@ -127,20 +145,20 @@ function CategoryCard({ cat, session, usedTiles, clickingTile, onTileClick }) {
               used={usedTiles.has(`${cat.id}_${diff}_1`)}
               clicking={clickingTile}
               onClick={() => onTileClick(cat.id, diff, 1)}
+              dark={dark}
             />
           ))}
         </div>
 
-        {/* Center: image + title */}
-        <div className="flex-1 flex flex-col items-center justify-center min-w-0">
-          {/* Image */}
+        {/* Center: large image + title */}
+        <div className="flex-1 flex flex-col items-center justify-center min-w-0 py-1">
           <div
-            className="rounded-xl overflow-hidden flex items-center justify-center"
+            className="rounded-xl overflow-hidden flex items-center justify-center mb-1.5"
             style={{
-              width:  "clamp(60px, 10vw, 130px)",
-              height: "clamp(60px, 10vw, 130px)",
-              background: `linear-gradient(135deg, ${cat.color || "#5B0E14"}33, ${cat.color || "#5B0E14"}11)`,
-              boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
+              width:  "clamp(80px, 15vw, 200px)",
+              height: "clamp(80px, 15vw, 200px)",
+              background: `linear-gradient(135deg, ${cat.color || "#5B0E14"}44, ${cat.color || "#5B0E14"}11)`,
+              boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
               flexShrink: 0,
             }}
           >
@@ -152,38 +170,34 @@ function CategoryCard({ cat, session, usedTiles, clickingTile, onTileClick }) {
                 onError={(e) => { e.target.style.display = "none"; }}
               />
             ) : (
-              <span style={{ fontSize: "clamp(2rem, 4vw, 3rem)" }}>{cat.icon || "🎯"}</span>
+              <span style={{ fontSize: "clamp(2.5rem, 5vw, 4rem)" }}>{cat.icon || "🎯"}</span>
             )}
           </div>
 
-          {/* Category title */}
+          {/* Category name */}
           <div
-            className="font-black text-center mt-1.5 leading-tight"
+            className="font-black text-center leading-tight"
             style={{
-              color: TEXT_DARK,
-              fontSize: "clamp(0.6rem, 1.5vw, 0.95rem)",
+              color: P.textMain,
+              fontSize: "clamp(0.65rem, 1.5vw, 1rem)",
               fontFamily: "Cairo, sans-serif",
-              maxWidth: "120px",
+              maxWidth: "180px",
             }}
           >
             {cat.name}
           </div>
 
-          {/* Team owner badge */}
+          {/* Team badge */}
           <div
-            className="text-[9px] font-bold mt-0.5 px-2 py-0.5 rounded-full"
-            style={{
-              background: `${teamColor}18`,
-              color: teamColor,
-              border: `1px solid ${teamColor}33`,
-            }}
+            className="mt-0.5 text-[9px] font-bold px-2 py-0.5 rounded-full"
+            style={{ background: `${teamColor}18`, color: teamColor, border: `1px solid ${teamColor}33` }}
           >
             {teamName}
           </div>
         </div>
 
-        {/* Right buttons (slot 2 = Team B) */}
-        <div className="flex flex-col gap-1.5 shrink-0" style={{ minWidth: "clamp(48px,7vw,80px)" }}>
+        {/* Right column: slot 2 buttons */}
+        <div className="flex flex-col justify-around gap-1.5 shrink-0" style={{ minWidth: "clamp(55px,9vw,110px)" }}>
           {DIFFICULTIES.map(diff => (
             <ScoreBtn
               key={`${cat.id}_${diff}_2`}
@@ -191,6 +205,7 @@ function CategoryCard({ cat, session, usedTiles, clickingTile, onTileClick }) {
               used={usedTiles.has(`${cat.id}_${diff}_2`)}
               clicking={clickingTile}
               onClick={() => onTileClick(cat.id, diff, 2)}
+              dark={dark}
             />
           ))}
         </div>
@@ -199,19 +214,19 @@ function CategoryCard({ cat, session, usedTiles, clickingTile, onTileClick }) {
   );
 }
 
-/* ═══════════════════════════════════════════════════════ */
-/* Main Board                                              */
-/* ═══════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════ Main Board ═══ */
 export default function GameBoardPage() {
   const navigate = useNavigate();
-  const { session, resetGame } = useGame();
-  const [categories, setCategories] = useState([]);
-  const [usedTiles, setUsedTiles]   = useState(new Set());
-  const [loading, setLoading]       = useState(true);
-  const [scores, setScores]         = useState({ team1: 0, team2: 0 });
+  const { session, resetGame, darkMode, toggleDarkMode } = useGame();
+  const [categories, setCategories]     = useState([]);
+  const [usedTiles, setUsedTiles]       = useState(new Set());
+  const [loading, setLoading]           = useState(true);
+  const [scores, setScores]             = useState({ team1: 0, team2: 0 });
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [showWinner, setShowWinner]         = useState(false);
   const [clickingTile, setClickingTile]     = useState(null);
+
+  const P = darkMode ? DARK : LIGHT;
 
   useEffect(() => {
     if (!session) { navigate("/"); return; }
@@ -270,8 +285,8 @@ export default function GameBoardPage() {
   const handleEndGame = () => { fireConfetti(); setShowEndConfirm(false); setShowWinner(true); };
 
   if (loading) return (
-    <div className="h-screen flex items-center justify-center" style={{ background: BOARD_BG }}>
-      <div className="text-xl font-bold animate-pulse" style={{ color: TEXT_DARK }}>جاري تحميل اللوحة...</div>
+    <div className="h-screen flex items-center justify-center" style={{ background: P.boardBg }}>
+      <div className="text-xl font-bold animate-pulse" style={{ color: P.textMain }}>جاري تحميل اللوحة...</div>
     </div>
   );
 
@@ -284,36 +299,48 @@ export default function GameBoardPage() {
     : null;
 
   return (
-    <div
-      className="h-screen flex flex-col overflow-hidden"
-      style={{ minHeight: "100svh", background: BOARD_BG }}
-    >
+    <div className="h-screen flex flex-col overflow-hidden" style={{ minHeight: "100svh", background: P.boardBg }}>
+
       {/* ── Score Bar ── */}
       <div
         className="shrink-0 flex items-center justify-between px-3 py-2 border-b"
-        style={{ background: "rgba(44,58,26,0.92)", borderColor: "rgba(199,211,164,0.25)" }}
+        style={{ background: P.scoreBg, borderColor: P.scoreBorder }}
       >
         {/* Team 1 */}
         <div
-          className="flex items-center gap-2 rounded-2xl px-3 py-1.5"
           data-testid="team1-score"
+          className="flex items-center gap-2 rounded-2xl px-3 py-1.5"
           style={{ background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.3)" }}
         >
           <span className="text-red-300 text-xs font-black truncate max-w-[80px] hidden sm:block">
             🔴 {session?.team1_name}
           </span>
           <span className="text-red-300 text-xs sm:hidden">🔴</span>
-          <span className="text-yellow-200 text-2xl md:text-3xl font-black">
-            <ScoreCounter value={scores.team1} />
+          <span className="text-2xl md:text-3xl font-black">
+            <ScoreCounter value={scores.team1} dark={darkMode} />
           </span>
         </div>
 
-        {/* Center brand + actions */}
-        <div className="flex flex-col items-center">
+        {/* Center */}
+        <div className="flex flex-col items-center gap-0.5">
           <div className="text-yellow-200 font-black text-xl" style={{ fontFamily: "Cairo, sans-serif" }}>
             حُجّة
           </div>
-          <div className="flex gap-3 mt-0.5">
+          <div className="flex items-center gap-2">
+            {/* Dark Mode Toggle */}
+            <button
+              data-testid="dark-mode-toggle"
+              onClick={toggleDarkMode}
+              title={darkMode ? "الوضع الفاتح" : "الوضع الداكن"}
+              className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full transition-all duration-200"
+              style={{
+                background: darkMode ? "rgba(120,170,90,0.25)" : "rgba(200,200,150,0.2)",
+                color: darkMode ? "#C7D3A4" : "#F1E194",
+                border: `1px solid ${darkMode ? "rgba(120,170,90,0.3)" : "rgba(241,225,148,0.2)"}`,
+              }}
+            >
+              {darkMode ? "☀️ فاتح" : "🌙 داكن"}
+            </button>
             <button
               data-testid="end-game-btn"
               onClick={() => setShowEndConfirm(true)}
@@ -326,12 +353,12 @@ export default function GameBoardPage() {
 
         {/* Team 2 */}
         <div
-          className="flex items-center gap-2 rounded-2xl px-3 py-1.5"
           data-testid="team2-score"
+          className="flex items-center gap-2 rounded-2xl px-3 py-1.5"
           style={{ background: "rgba(59,130,246,0.15)", border: "1px solid rgba(59,130,246,0.3)" }}
         >
-          <span className="text-blue-200 text-2xl md:text-3xl font-black">
-            <ScoreCounter value={scores.team2} />
+          <span className="text-2xl md:text-3xl font-black">
+            <ScoreCounter value={scores.team2} dark={darkMode} />
           </span>
           <span className="text-blue-300 text-xs font-black truncate max-w-[80px] hidden sm:block">
             {session?.team2_name} 🔵
@@ -359,37 +386,27 @@ export default function GameBoardPage() {
             usedTiles={usedTiles}
             clickingTile={clickingTile}
             onTileClick={handleTileClick}
+            dark={darkMode}
           />
         ))}
       </div>
 
       {/* ── Legend ── */}
-      <div
-        className="shrink-0 flex justify-center gap-6 pb-1.5"
-        style={{ color: TEXT_DARK }}
-      >
+      <div className="shrink-0 flex justify-center gap-6 pb-1.5">
         <div className="flex items-center gap-1.5">
           <div className="w-3 h-1.5 rounded-full bg-red-500/60" />
-          <span className="text-xs font-bold opacity-60">{session?.team1_name}</span>
+          <span className="text-xs font-bold" style={{ color: P.textSub }}>{session?.team1_name}</span>
         </div>
         <div className="flex items-center gap-1.5">
           <div className="w-3 h-1.5 rounded-full bg-blue-500/60" />
-          <span className="text-xs font-bold opacity-60">{session?.team2_name}</span>
-        </div>
-        <div className="flex items-center gap-2 text-xs opacity-50">
-          {DIFF_COLOR[300] && <span className="inline-block w-3 h-3 rounded-full bg-green-600"/>}
-          <span>300</span>
-          {DIFF_COLOR[600] && <span className="inline-block w-3 h-3 rounded-full bg-orange-600"/>}
-          <span>600</span>
-          {DIFF_COLOR[900] && <span className="inline-block w-3 h-3 rounded-full bg-red-700"/>}
-          <span>900</span>
+          <span className="text-xs font-bold" style={{ color: P.textSub }}>{session?.team2_name}</span>
         </div>
       </div>
 
       {/* ── All-used banner ── */}
       {allUsed && !showWinner && (
         <div
-          className="fixed bottom-0 inset-x-0 p-4 text-center z-40 animate-slide-up border-t-4"
+          className="fixed bottom-0 inset-x-0 p-4 text-center z-40 border-t-4"
           style={{ background: "#F1E194", borderColor: "#5B0E14" }}
         >
           <div className="text-primary font-black text-xl mb-3">
@@ -404,23 +421,17 @@ export default function GameBoardPage() {
         </div>
       )}
 
-      {/* ── End Game Confirm ── */}
+      {/* ── End Confirm ── */}
       {showEndConfirm && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-3xl p-8 max-w-sm w-full text-center animate-scale-in shadow-2xl">
-            <div className="text-2xl font-black mb-2" style={{ color: TEXT_DARK }}>إنهاء اللعبة؟</div>
+            <div className="text-2xl font-black mb-2 text-primary">إنهاء اللعبة؟</div>
             <div className="text-gray-500 mb-6 text-sm">سيتم إعلان الفائز الحالي</div>
             <div className="flex gap-3 justify-center">
-              <button
-                onClick={handleEndGame}
-                className="bg-primary text-secondary px-6 py-3 rounded-full font-black hover:scale-105 transition-all"
-              >
+              <button onClick={handleEndGame} className="bg-primary text-secondary px-6 py-3 rounded-full font-black hover:scale-105 transition-all">
                 نعم، إنهاء
               </button>
-              <button
-                onClick={() => setShowEndConfirm(false)}
-                className="border-2 border-gray-200 text-gray-500 px-6 py-3 rounded-full font-bold hover:bg-gray-50 transition-all"
-              >
+              <button onClick={() => setShowEndConfirm(false)} className="border-2 border-gray-200 text-gray-500 px-6 py-3 rounded-full font-bold hover:bg-gray-50 transition-all">
                 رجوع
               </button>
             </div>
@@ -430,12 +441,9 @@ export default function GameBoardPage() {
 
       {/* ── Winner Screen ── */}
       {showWinner && (
-        <div
-          className="fixed inset-0 flex flex-col items-center justify-center z-50 px-6 text-center"
-          style={{ background: BOARD_BG }}
-        >
+        <div className="fixed inset-0 flex flex-col items-center justify-center z-50 px-6 text-center" style={{ background: P.boardBg }}>
           <div className="text-7xl md:text-9xl mb-4">🏆</div>
-          <div className="text-lg font-bold mb-2" style={{ color: TEXT_DARK, opacity: 0.6 }}>الفائز</div>
+          <div className="text-lg font-bold mb-2" style={{ color: P.textMain, opacity: 0.6 }}>الفائز</div>
           <div
             className="text-5xl md:text-7xl font-black mb-4 animate-winner-glow"
             style={{ color: "#5B0E14", fontFamily: "Cairo,sans-serif", textShadow: "0 4px 20px rgba(91,14,20,0.3)" }}
@@ -443,14 +451,14 @@ export default function GameBoardPage() {
             {winner === "تعادل" ? "🤝 تعادل!" : winner}
           </div>
           <div className="flex gap-8 mb-8">
-            <div className="text-center bg-white/70 rounded-2xl px-6 py-4">
+            <div className="text-center rounded-2xl px-6 py-4" style={{ background: darkMode ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.7)" }}>
               <div className="text-red-500 text-sm font-bold mb-1">{session?.team1_name}</div>
-              <div className="text-3xl font-black" style={{ color: TEXT_DARK }}>{scores.team1}</div>
+              <div className="text-3xl font-black" style={{ color: P.textMain }}>{scores.team1}</div>
             </div>
             <div className="flex items-center text-gray-400 text-xl">VS</div>
-            <div className="text-center bg-white/70 rounded-2xl px-6 py-4">
+            <div className="text-center rounded-2xl px-6 py-4" style={{ background: darkMode ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.7)" }}>
               <div className="text-blue-500 text-sm font-bold mb-1">{session?.team2_name}</div>
-              <div className="text-3xl font-black" style={{ color: TEXT_DARK }}>{scores.team2}</div>
+              <div className="text-3xl font-black" style={{ color: P.textMain }}>{scores.team2}</div>
             </div>
           </div>
           <button

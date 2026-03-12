@@ -32,6 +32,8 @@ export default function AdminDashboard() {
   const [form, setForm] = useState(emptyQuestion);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("questions");
+  const [gameSettings, setGameSettings] = useState({ default_timer: 65, word_timers: { "300": 80, "600": 60, "900": 45 } });
+  const [settingsSaved, setSettingsSaved] = useState(false);
 
   // New category form
   const [catForm, setCatForm] = useState({ name: "", icon: "", description: "", is_special: false, color: "#5B0E14", image_url: "" });
@@ -76,9 +78,42 @@ export default function AdminDashboard() {
     } catch { toast.error("خطأ في تحميل الإحصاءات"); }
   }, []);
 
+  const loadSettings = useCallback(async () => {
+    try {
+      const { data } = await axios.get(`${API}/settings`);
+      setGameSettings(data);
+    } catch {}
+  }, []);
+
+  const saveSettings = async () => {
+    try {
+      await axios.put(`${API}/settings`, gameSettings, { headers });
+      toast.success("تم حفظ الإعدادات!");
+      setSettingsSaved(true);
+      setTimeout(() => setSettingsSaved(false), 2000);
+    } catch { toast.error("خطأ في الحفظ"); }
+  };
+
+  // ── Image upload helper ──
+  const uploadImage = async (file, onSuccess) => {
+    if (!file) return;
+    const fd = new FormData();
+    fd.append("file", file);
+    try {
+      const { data } = await axios.post(`${API}/upload`, fd, {
+        headers: { ...headers, "Content-Type": "multipart/form-data" },
+      });
+      onSuccess(data.url);
+      toast.success("تم رفع الصورة!");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "خطأ في رفع الصورة");
+    }
+  };
+
   useEffect(() => {
     if (activeTab === "users") loadUsers();
     if (activeTab === "analytics") loadAnalytics();
+    if (activeTab === "settings") loadSettings();
   }, [activeTab]);
 
   const handleSeed = async () => {
@@ -193,14 +228,14 @@ export default function AdminDashboard() {
         </div>
         <div className="flex gap-3 items-center">
           {/* Tabs */}
-          {["questions", "users", "analytics"].map((tab) => (
+          {["questions", "users", "analytics", "settings"].map((tab) => (
             <button
               key={tab}
               data-testid={`tab-${tab}`}
               onClick={() => setActiveTab(tab)}
               className={`text-sm px-3 py-1 rounded-lg font-bold transition-all ${activeTab === tab ? "bg-secondary text-primary" : "text-secondary/60 hover:text-secondary"}`}
             >
-              {tab === "questions" ? "الأسئلة" : tab === "users" ? "المستخدمون" : "الإحصاءات"}
+              {tab === "questions" ? "الأسئلة" : tab === "users" ? "المستخدمون" : tab === "analytics" ? "الإحصاءات" : "الإعدادات"}
             </button>
           ))}
           <span className="text-secondary/20">|</span>

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState } from "react";
+import React, { createContext, useContext, useState, useEffect } from "react";
 import axios from "axios";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -15,6 +15,19 @@ export const GameProvider = ({ children }) => {
     catch { return null; }
   });
   const [userToken, setUserToken] = useState(() => localStorage.getItem("hujjah_user_token") || null);
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem("hujjah_dark") === "true");
+  const [gameSettings, setGameSettings] = useState({ default_timer: 65, word_timers: { "300": 80, "600": 60, "900": 45 } });
+
+  // Load settings on mount
+  useEffect(() => {
+    axios.get(`${API}/settings`).then(({ data }) => setGameSettings(data)).catch(() => {});
+  }, []);
+
+  const toggleDarkMode = () => {
+    const next = !darkMode;
+    setDarkMode(next);
+    localStorage.setItem("hujjah_dark", String(next));
+  };
 
   const saveSession = (s) => {
     setSession(s);
@@ -112,9 +125,9 @@ export const GameProvider = ({ children }) => {
 
   return (
     <GameContext.Provider value={{
-      session, loading, currentUser, userToken,
+      session, loading, currentUser, userToken, darkMode, gameSettings,
       createSession, updateSession, getNextQuestion, updateScore,
-      resetGame, saveSession, loginUser, registerUser, logoutUser, refreshUser
+      resetGame, saveSession, loginUser, registerUser, logoutUser, refreshUser, toggleDarkMode
     }}>
       {children}
     </GameContext.Provider>

@@ -1,8 +1,9 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header, Request, BackgroundTasks
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header, Request, BackgroundTasks, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
-import os, logging, uuid, random
+import os, logging, uuid, random, shutil
 from pathlib import Path
 from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional, Dict
@@ -22,6 +23,11 @@ db = client[os.environ['DB_NAME']]
 
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
+
+# ─── Static files for uploaded images ────────────────────────────────────────
+UPLOAD_DIR = ROOT_DIR / "static" / "uploads"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/api/static", StaticFiles(directory=str(ROOT_DIR / "static")), name="static")
 
 SECRET_KEY      = os.environ.get('JWT_SECRET_KEY', 'hujjah_secret_2024')
 ADMIN_PASSWORD  = os.environ.get('ADMIN_PASSWORD', 'hujjah2024')
@@ -1136,6 +1142,57 @@ async def seed_data(force: bool = False, _: bool = Depends(get_admin)):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
+# SETTINGS
+# ══════════════════════════════════════════════════════════════════════════════
+
+DEFAULT_SETTINGS = {
+    "key": "game_settings",
+    "default_timer": 65,
+    "word_timers": {"300": 80, "600": 60, "900": 45}
+}
+
+@api_router.get("/settings")
+async def get_settings():
+    s = await db.settings.find_one({"key": "game_settings"}, {"_id": 0})
+    if not s:
+        await db.settings.insert_one({**DEFAULT_SETTINGS})
+        return DEFAULT_SETTINGS
+    s.pop("_id", None)
+    return s
+
+@api_router.put("/settings")
+async def update_settings(body: dict, admin=Depends(get_admin)):
+    body.pop("_id", None)
+    body.pop("key", None)
+    await db.settings.update_one(
+        {"key": "game_settings"},
+        {"$set": {**body, "key": "game_settings"}},
+        upsert=True
+    )
+    return {"message": "تم حفظ الإعدادات"}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# IMAGE UPLOAD
+# ══════════════════════════════════════════════════════════════════════════════
+
+ALLOWED_EXTS = {"jpg", "jpeg", "png", "webp"}
+
+@api_router.post("/upload")
+async def upload_image(request: Request, file: UploadFile = File(...), admin=Depends(get_admin)):
+    ext = (file.filename or "file.jpg").rsplit(".", 1)[-1].lower()
+    if ext not in ALLOWED_EXTS:
+        raise HTTPException(400, "يُسمح فقط بـ PNG / JPG / WEBP")
+    if file.size and file.size > 5 * 1024 * 1024:
+        raise HTTPException(400, "الحجم الأقصى 5 ميغابايت")
+    filename = f"{uuid.uuid4()}.{ext}"
+    dest = UPLOAD_DIR / filename
+    content = await file.read()
+    dest.write_bytes(content)
+    base = str(request.base_url).rstrip("/")
+    url = f"{base}/api/static/uploads/{filename}"
+    return {"url": url, "filename": filename}
+
 # ROOT
 # ══════════════════════════════════════════════════════════════════════════════
 
