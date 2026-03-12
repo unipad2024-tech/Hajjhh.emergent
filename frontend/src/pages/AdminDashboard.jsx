@@ -32,8 +32,16 @@ export default function AdminDashboard() {
   const [form, setForm] = useState(emptyQuestion);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("questions");
-  const [gameSettings, setGameSettings] = useState({ default_timer: 65, word_timers: { "300": 80, "600": 60, "900": 45 }, free_categories: [] });
+  const [gameSettings, setGameSettings] = useState({ default_timer: 65, word_timers: { "300": 80, "600": 60, "900": 45 }, free_categories: [], trial_enabled: true, trial_team1_categories: [], trial_team2_categories: [], trial_questions_only: false });
   const [settingsSaved, setSettingsSaved] = useState(false);
+
+  // Experimental mode
+  const [expQuestions, setExpQuestions] = useState([]);
+  const [expCatFilter, setExpCatFilter] = useState("all");
+  const [expDiffFilter, setExpDiffFilter] = useState("all");
+  const [expLoading, setExpLoading] = useState(false);
+  const [expEditQ, setExpEditQ] = useState(null);
+  const [expForm, setExpForm] = useState({ text: "", answer: "", difficulty: 300, image_url: "", answer_image_url: "" });
 
   // AI Generator state
   const [aiCatId, setAiCatId] = useState("");
@@ -96,10 +104,19 @@ export default function AdminDashboard() {
 
   const saveSettings = async () => {
     try {
-      await axios.put(`${API}/settings`, gameSettings, { headers });
-      toast.success("تم حفظ الإعدادات!");
+      const body = {
+        default_timer: gameSettings.default_timer,
+        word_timers: gameSettings.word_timers,
+        free_categories: gameSettings.free_categories || [],
+        trial_enabled: gameSettings.trial_enabled ?? true,
+        trial_team1_categories: gameSettings.trial_team1_categories || [],
+        trial_team2_categories: gameSettings.trial_team2_categories || [],
+        trial_questions_only: gameSettings.trial_questions_only ?? false,
+      };
+      await axios.put(`${API}/settings`, body, { headers });
+      toast.success("تم حفظ الإعدادات ✓");
       setSettingsSaved(true);
-      setTimeout(() => setSettingsSaved(false), 2000);
+      setTimeout(() => setSettingsSaved(false), 2500);
     } catch { toast.error("خطأ في الحفظ"); }
   };
 
@@ -207,6 +224,46 @@ export default function AdminDashboard() {
     toast.success("تم الحذف");
   };
 
+  // ── Experimental Mode Handlers ──
+  const loadExpQuestions = async () => {
+    setExpLoading(true);
+    try {
+      const { data } = await axios.get(`${API}/questions`, { params: { ...(expCatFilter !== "all" && { category_id: expCatFilter }) } });
+      setExpQuestions(data);
+    } catch { toast.error("خطأ في تحميل الأسئلة"); }
+    finally { setExpLoading(false); }
+  };
+
+  const handleToggleExp = async (q) => {
+    try {
+      await axios.patch(`${API}/questions/${q.id}/experimental`, { is_experimental: !q.is_experimental }, { headers });
+      setExpQuestions(prev => prev.map(x => x.id === q.id ? { ...x, is_experimental: !x.is_experimental } : x));
+      toast.success((!q.is_experimental) ? "مُضاف لوضع التجربة ✓" : "مُزال من وضع التجربة");
+    } catch { toast.error("خطأ"); }
+  };
+
+  const handleDeleteExpQ = async (qId) => {
+    if (!window.confirm("هل تريد حذف هذا السؤال؟")) return;
+    try {
+      await axios.delete(`${API}/questions/${qId}`, { headers });
+      setExpQuestions(prev => prev.filter(x => x.id !== qId));
+      toast.success("تم الحذف");
+    } catch { toast.error("خطأ في الحذف"); }
+  };
+
+  const handleSaveExpQ = async () => {
+    if (!expForm.text.trim() || !expForm.answer.trim()) { toast.error("أدخل السؤال والإجابة"); return; }
+    try {
+      if (expEditQ) {
+        await axios.put(`${API}/questions/${expEditQ.id}`, { ...expForm, is_experimental: true, category_id: expEditQ.category_id }, { headers });
+        setExpQuestions(prev => prev.map(x => x.id === expEditQ.id ? { ...x, ...expForm, is_experimental: true } : x));
+        toast.success("تم التحديث");
+      }
+      setExpEditQ(null);
+      setExpForm({ text: "", answer: "", difficulty: 300, image_url: "", answer_image_url: "" });
+    } catch { toast.error("خطأ في الحفظ"); }
+  };
+
   const handleAiGenerate = async () => {
     if (!aiCatId) { toast.error("اختر الفئة أولاً"); return; }
     setAiGenerating(true);
@@ -279,14 +336,19 @@ export default function AdminDashboard() {
         </div>
         <div className="flex gap-3 items-center">
           {/* Tabs */}
-          {["questions", "users", "analytics", "settings", "ai"].map((tab) => (
+          {["questions", "users", "analytics", "settings", "ai", "experimental"].map((tab) => (
             <button
               key={tab}
               data-testid={`tab-${tab}`}
-              onClick={() => setActiveTab(tab)}
+              onClick={() => { setActiveTab(tab); if (tab === "experimental") { loadSettings(); loadExpQuestions(); } if (tab === "settings") loadSettings(); }}
               className={`text-sm px-3 py-1 rounded-lg font-bold transition-all ${activeTab === tab ? "bg-secondary text-primary" : "text-secondary/60 hover:text-secondary"}`}
             >
-              {tab === "questions" ? "الأسئلة" : tab === "users" ? "المستخدمون" : tab === "analytics" ? "الإحصاءات" : tab === "settings" ? "الإعدادات" : "🤖 توليد AI"}
+              {tab === "questions" ? "الأسئلة"
+                : tab === "users" ? "المستخدمون"
+                : tab === "analytics" ? "الإحصاءات"
+                : tab === "settings" ? "الإعدادات"
+                : tab === "ai" ? "🤖 توليد AI"
+                : "🔓 وضع التجربة"}
             </button>
           ))}
           <span className="text-secondary/20">|</span>
@@ -818,6 +880,253 @@ export default function AdminDashboard() {
               <div className="text-sm mt-1">الذكاء الاصطناعي سيكتب لك أسئلة حماسية بالعربي</div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── EXPERIMENTAL MODE TAB ── */}
+      {activeTab === "experimental" && (
+        <div className="flex h-full" style={{ minHeight: "calc(100vh - 140px)" }}>
+
+          {/* Left: Settings Panel */}
+          <div className="w-72 border-l border-primary/10 p-4 flex-shrink-0 overflow-y-auto bg-secondary/5">
+            <h3 className="font-black text-base mb-4 text-primary flex items-center gap-2">
+              <span>🔓</span> إعدادات وضع التجربة
+            </h3>
+
+            {/* Enable/Disable toggle */}
+            <div className="bg-white rounded-xl p-3 border border-primary/10 mb-4">
+              <div className="flex items-center justify-between mb-1">
+                <span className="font-bold text-sm text-primary">تفعيل وضع التجربة</span>
+                <button
+                  data-testid="trial-toggle"
+                  onClick={() => setGameSettings({ ...gameSettings, trial_enabled: !gameSettings.trial_enabled })}
+                  className={`relative w-11 h-6 rounded-full transition-colors ${gameSettings.trial_enabled ? "bg-green-500" : "bg-gray-300"}`}
+                >
+                  <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${gameSettings.trial_enabled ? "translate-x-5 left-0.5" : "translate-x-0 left-0.5"}`} />
+                </button>
+              </div>
+              <p className="text-xs text-primary/50">{gameSettings.trial_enabled ? "مفعّل - المستخدمون المجانيون يلعبون" : "موقوف - لا يمكن للمجانيين اللعب"}</p>
+            </div>
+
+            {/* Use trial questions only */}
+            <div className="bg-white rounded-xl p-3 border border-primary/10 mb-4">
+              <div className="flex items-center justify-between mb-1">
+                <span className="font-bold text-sm text-primary">أسئلة التجربة فقط</span>
+                <button
+                  data-testid="trial-questions-only-toggle"
+                  onClick={() => setGameSettings({ ...gameSettings, trial_questions_only: !gameSettings.trial_questions_only })}
+                  className={`relative w-11 h-6 rounded-full transition-colors ${gameSettings.trial_questions_only ? "bg-blue-500" : "bg-gray-300"}`}
+                >
+                  <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${gameSettings.trial_questions_only ? "translate-x-5 left-0.5" : "translate-x-0 left-0.5"}`} />
+                </button>
+              </div>
+              <p className="text-xs text-primary/50">إذا مفعّل: في وضع التجربة تظهر الأسئلة المعلّمة فقط</p>
+            </div>
+
+            {/* Team 1 Categories */}
+            <div className="bg-white rounded-xl p-3 border border-red-200 mb-3">
+              <h4 className="font-black text-sm text-red-600 mb-2">🔴 فئات الفريق الأول (3)</h4>
+              <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                {categories.map(cat => {
+                  const sel = (gameSettings.trial_team1_categories || []).includes(cat.id);
+                  return (
+                    <label key={cat.id} className={`flex items-center gap-2 p-1.5 rounded-lg cursor-pointer text-xs font-bold transition-all ${sel ? "bg-red-50 text-red-700" : "hover:bg-primary/5 text-primary/70"}`}>
+                      <input
+                        type="checkbox"
+                        checked={sel}
+                        onChange={(e) => {
+                          const cur = gameSettings.trial_team1_categories || [];
+                          const updated = e.target.checked
+                            ? [...cur.filter(id => !((gameSettings.trial_team2_categories || []).includes(id) && id === cat.id)), cat.id].slice(0, 3)
+                            : cur.filter(id => id !== cat.id);
+                          setGameSettings({ ...gameSettings, trial_team1_categories: updated });
+                        }}
+                        className="w-3.5 h-3.5 accent-red-600"
+                      />
+                      {cat.icon || "🎯"} {cat.name}
+                      {sel && <span className="text-[10px] text-red-400 mr-auto">✓</span>}
+                    </label>
+                  );
+                })}
+              </div>
+              <div className="text-[10px] text-primary/30 mt-1">{(gameSettings.trial_team1_categories || []).length}/3 مختارة</div>
+            </div>
+
+            {/* Team 2 Categories */}
+            <div className="bg-white rounded-xl p-3 border border-blue-200 mb-4">
+              <h4 className="font-black text-sm text-blue-600 mb-2">🔵 فئات الفريق الثاني (3)</h4>
+              <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                {categories.map(cat => {
+                  const sel = (gameSettings.trial_team2_categories || []).includes(cat.id);
+                  return (
+                    <label key={cat.id} className={`flex items-center gap-2 p-1.5 rounded-lg cursor-pointer text-xs font-bold transition-all ${sel ? "bg-blue-50 text-blue-700" : "hover:bg-primary/5 text-primary/70"}`}>
+                      <input
+                        type="checkbox"
+                        checked={sel}
+                        onChange={(e) => {
+                          const cur = gameSettings.trial_team2_categories || [];
+                          const updated = e.target.checked
+                            ? [...cur, cat.id].slice(0, 3)
+                            : cur.filter(id => id !== cat.id);
+                          setGameSettings({ ...gameSettings, trial_team2_categories: updated });
+                        }}
+                        className="w-3.5 h-3.5 accent-blue-600"
+                      />
+                      {cat.icon || "🎯"} {cat.name}
+                      {sel && <span className="text-[10px] text-blue-400 mr-auto">✓</span>}
+                    </label>
+                  );
+                })}
+              </div>
+              <div className="text-[10px] text-primary/30 mt-1">{(gameSettings.trial_team2_categories || []).length}/3 مختارة</div>
+            </div>
+
+            <button
+              data-testid="save-trial-settings-btn"
+              onClick={saveSettings}
+              className="w-full bg-primary text-secondary py-2.5 rounded-xl font-black hover:scale-[1.02] transition-all text-sm"
+            >
+              {settingsSaved ? "✓ تم الحفظ!" : "💾 حفظ الإعدادات"}
+            </button>
+          </div>
+
+          {/* Right: Questions List */}
+          <div className="flex-1 overflow-y-auto p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <h3 className="font-black text-lg text-primary">أسئلة وضع التجربة</h3>
+                <span className="bg-primary/10 text-primary text-xs font-bold px-2 py-0.5 rounded-full">
+                  {expQuestions.filter(q => q.is_experimental).length} معلّمة
+                </span>
+              </div>
+              <div className="flex gap-2">
+                <select
+                  value={expCatFilter}
+                  onChange={(e) => { setExpCatFilter(e.target.value); }}
+                  className="border border-primary/20 rounded-lg px-2 py-1 text-xs font-bold outline-none bg-white"
+                >
+                  <option value="all">كل الفئات</option>
+                  {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                <select
+                  value={expDiffFilter}
+                  onChange={(e) => setExpDiffFilter(e.target.value)}
+                  className="border border-primary/20 rounded-lg px-2 py-1 text-xs font-bold outline-none bg-white"
+                >
+                  <option value="all">كل الصعوبات</option>
+                  <option value="300">300 - سهل</option>
+                  <option value="600">600 - متوسط</option>
+                  <option value="900">900 - صعب</option>
+                </select>
+                <button onClick={loadExpQuestions} className="bg-primary/10 text-primary px-3 py-1 rounded-lg text-xs font-bold hover:bg-primary/20 transition-all">
+                  تحديث
+                </button>
+              </div>
+            </div>
+
+            {/* Edit Form */}
+            {expEditQ && (
+              <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 mb-4">
+                <h4 className="font-black text-sm text-amber-700 mb-3">تعديل السؤال</h4>
+                <div className="space-y-2">
+                  <textarea
+                    value={expForm.text}
+                    onChange={(e) => setExpForm({ ...expForm, text: e.target.value })}
+                    rows={2}
+                    className="w-full border border-amber-300 rounded-lg px-3 py-2 text-sm font-bold outline-none resize-none"
+                    placeholder="نص السؤال"
+                  />
+                  <div className="flex gap-2">
+                    <input
+                      value={expForm.answer}
+                      onChange={(e) => setExpForm({ ...expForm, answer: e.target.value })}
+                      className="flex-1 border border-amber-300 rounded-lg px-3 py-2 text-sm outline-none"
+                      placeholder="الإجابة"
+                    />
+                    <select
+                      value={expForm.difficulty}
+                      onChange={(e) => setExpForm({ ...expForm, difficulty: parseInt(e.target.value) })}
+                      className="border border-amber-300 rounded-lg px-2 py-2 text-sm outline-none bg-white font-bold"
+                    >
+                      <option value={300}>300</option>
+                      <option value={600}>600</option>
+                      <option value={900}>900</option>
+                    </select>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={handleSaveExpQ} className="flex-1 bg-amber-600 text-white py-2 rounded-lg text-sm font-black hover:bg-amber-700 transition-all">حفظ التعديل</button>
+                    <button onClick={() => { setExpEditQ(null); setExpForm({ text: "", answer: "", difficulty: 300, image_url: "", answer_image_url: "" }); }} className="px-4 bg-primary/10 text-primary py-2 rounded-lg text-sm font-bold">إلغاء</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Questions List */}
+            {expLoading ? (
+              <div className="text-center py-12 text-primary/40 font-bold">جاري التحميل...</div>
+            ) : (
+              <div className="space-y-2">
+                {expQuestions
+                  .filter(q => expCatFilter === "all" || q.category_id === expCatFilter)
+                  .filter(q => expDiffFilter === "all" || q.difficulty === parseInt(expDiffFilter))
+                  .map(q => {
+                    const cat = categories.find(c => c.id === q.category_id);
+                    const diffColor = q.difficulty === 300 ? "text-green-600 bg-green-50" : q.difficulty === 600 ? "text-amber-600 bg-amber-50" : "text-red-600 bg-red-50";
+                    return (
+                      <div
+                        key={q.id}
+                        data-testid={`exp-question-${q.id}`}
+                        className={`flex items-start gap-3 p-3 rounded-xl border transition-all ${q.is_experimental ? "border-green-300 bg-green-50/50" : "border-primary/10 bg-white hover:border-primary/20"}`}
+                      >
+                        {/* Experimental toggle */}
+                        <button
+                          title={q.is_experimental ? "إزالة من وضع التجربة" : "إضافة لوضع التجربة"}
+                          onClick={() => handleToggleExp(q)}
+                          className={`w-8 h-8 rounded-full flex items-center justify-center text-sm shrink-0 transition-all ${q.is_experimental ? "bg-green-500 text-white shadow-md" : "bg-primary/10 text-primary/40 hover:bg-primary/20"}`}
+                        >
+                          {q.is_experimental ? "✓" : "○"}
+                        </button>
+
+                        {/* Question content */}
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-bold text-primary line-clamp-2 mb-0.5">{q.text}</div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs text-primary/50 bg-primary/5 px-1.5 py-0.5 rounded">{cat?.name || q.category_id}</span>
+                            <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${diffColor}`}>{q.difficulty}</span>
+                            <span className="text-xs text-primary/50">الجواب: <span className="font-bold text-primary/70">{q.answer}</span></span>
+                            {q.is_experimental && <span className="text-xs text-green-600 font-bold">✓ في التجربة</span>}
+                          </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex gap-1 shrink-0">
+                          <button
+                            onClick={() => { setExpEditQ(q); setExpForm({ text: q.text, answer: q.answer, difficulty: q.difficulty, image_url: q.image_url || "", answer_image_url: q.answer_image_url || "" }); }}
+                            className="w-7 h-7 bg-amber-100 text-amber-700 rounded-lg flex items-center justify-center text-xs hover:bg-amber-200 transition-all"
+                            title="تعديل"
+                          >
+                            ✎
+                          </button>
+                          <button
+                            onClick={() => handleDeleteExpQ(q.id)}
+                            className="w-7 h-7 bg-red-100 text-red-500 rounded-lg flex items-center justify-center text-xs hover:bg-red-200 transition-all"
+                            title="حذف"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                {expQuestions.filter(q => expCatFilter === "all" || q.category_id === expCatFilter).filter(q => expDiffFilter === "all" || q.difficulty === parseInt(expDiffFilter)).length === 0 && (
+                  <div className="text-center py-10 text-primary/30">
+                    <div className="text-3xl mb-2">📭</div>
+                    <div className="font-bold">لا توجد أسئلة</div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

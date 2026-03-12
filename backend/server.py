@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
-import os, logging, uuid, random, shutil, re, json
+import os, logging, uuid, random, shutil, re, json, httpx
 from pathlib import Path
 from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional, Dict
@@ -13,7 +13,6 @@ from passlib.context import CryptContext
 from emergentintegrations.payments.stripe.checkout import (
     StripeCheckout, CheckoutSessionRequest, CheckoutSessionResponse, CheckoutStatusResponse
 )
-from emergentintegrations.llm.chat import LlmChat, UserMessage
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -353,9 +352,21 @@ async def get_categories():
 @api_router.get("/free-categories")
 async def get_free_categories():
     s = await db.settings.find_one({"key": "game_settings"}, {"_id": 0})
-    free_ids = s.get("free_categories", FREE_CATEGORIES) if s else FREE_CATEGORIES
-    cats = await db.categories.find({"id": {"$in": free_ids}}, {"_id": 0}).to_list(20)
-    return {"category_ids": free_ids, "categories": cats}
+    settings = {**DEFAULT_SETTINGS, **(s or {})}
+    t1 = settings.get("trial_team1_categories", DEFAULT_SETTINGS["trial_team1_categories"])
+    t2 = settings.get("trial_team2_categories", DEFAULT_SETTINGS["trial_team2_categories"])
+    all_ids = list(dict.fromkeys(t1 + t2))  # preserve order, no duplicates
+    cats = await db.categories.find({"id": {"$in": all_ids}}, {"_id": 0}).to_list(20)
+    cats_map = {c["id"]: c for c in cats}
+    return {
+        "trial_enabled":          settings.get("trial_enabled", True),
+        "trial_team1_categories": t1,
+        "trial_team2_categories": t2,
+        "team1_categories":       [cats_map[i] for i in t1 if i in cats_map],
+        "team2_categories":       [cats_map[i] for i in t2 if i in cats_map],
+        "category_ids":           all_ids,
+        "categories":             cats,
+    }
 
 @api_router.post("/categories")
 async def create_category(body: CategoryCreate, _: bool = Depends(get_admin)):
@@ -419,12 +430,20 @@ async def delete_question(q_id: str, _: bool = Depends(get_admin)):
     await db.questions.delete_one({"id": q_id})
     return {"message": "تم الحذف"}
 
+@api_router.patch("/questions/{q_id}/experimental")
+async def toggle_experimental(q_id: str, body: dict, _: bool = Depends(get_admin)):
+    val = body.get("is_experimental", True)
+    await db.questions.update_one({"id": q_id}, {"$set": {"is_experimental": val}})
+    return {"id": q_id, "is_experimental": val}
+
 # ══════════════════════════════════════════════════════════════════════════════
 # GAME SESSION
 # ══════════════════════════════════════════════════════════════════════════════
 
 @api_router.post("/game/session")
-async def create_session(body: GameSessionCreate):
+async def create_session(body: GameSessionCreate, authorization: Optional[str] = Header(None)):
+    user = await get_current_user(authorization)
+    is_trial = not user or user.get("subscription_type") != "premium"
     session = {
         "id": str(uuid.uuid4()),
         "team1_name": body.team1_name,
@@ -435,6 +454,7 @@ async def create_session(body: GameSessionCreate):
         "team2_categories": [],
         "used_questions": [],
         "user_id": body.user_id,
+        "is_trial": is_trial,
         "status": "setup",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -466,6 +486,7 @@ async def get_next_question(session_id: str, category_id: str, difficulty: int,
     if not session: raise HTTPException(404, "الجلسة غير موجودة")
 
     exclude_ids = list(session.get("used_questions", []))
+    is_trial    = session.get("is_trial", False)
 
     # Premium users: also exclude globally answered questions
     user = await get_current_user(authorization)
@@ -473,19 +494,33 @@ async def get_next_question(session_id: str, category_id: str, difficulty: int,
     if user:
         is_premium = (user.get("subscription_type") == "premium")
         if is_premium:
+            is_trial = False
             exclude_ids = list(set(exclude_ids + user.get("answered_question_ids", [])))
 
-    available = await db.questions.find(
-        {"category_id": category_id, "difficulty": difficulty, "id": {"$nin": exclude_ids}},
-        {"_id": 0}
-    ).to_list(1000)
+    # Build base query
+    base_q = {"category_id": category_id, "difficulty": difficulty, "id": {"$nin": exclude_ids}}
+
+    # Trial sessions: filter only experimental questions (if any are marked)
+    if is_trial:
+        settings_doc = await db.settings.find_one({"key": "game_settings"}, {"_id": 0})
+        use_trial_only = (settings_doc or {}).get("trial_questions_only", False)
+        if use_trial_only:
+            trial_q = {**base_q, "is_experimental": True}
+            available = await db.questions.find(trial_q, {"_id": 0}).to_list(1000)
+            if not available:
+                # fallback: all questions if none tagged
+                available = await db.questions.find(base_q, {"_id": 0}).to_list(1000)
+        else:
+            available = await db.questions.find(base_q, {"_id": 0}).to_list(1000)
+    else:
+        available = await db.questions.find(base_q, {"_id": 0}).to_list(1000)
 
     if not available:
-        # If premium exhausted, reset session excludes only (not user's global history)
-        available = await db.questions.find(
-            {"category_id": category_id, "difficulty": difficulty},
-            {"_id": 0}
-        ).to_list(1000)
+        # Reset and try again (ignoring exclude list)
+        reset_q = {"category_id": category_id, "difficulty": difficulty}
+        if is_trial and (settings_doc if 'settings_doc' in dir() else {}).get("trial_questions_only"):
+            reset_q["is_experimental"] = True
+        available = await db.questions.find(reset_q, {"_id": 0}).to_list(1000)
         if not available:
             raise HTTPException(404, "لا يوجد أسئلة")
 
@@ -1153,7 +1188,11 @@ DEFAULT_SETTINGS = {
     "key": "game_settings",
     "default_timer": 65,
     "word_timers": {"300": 80, "600": 60, "900": 45},
-    "free_categories": ["cat_word", "cat_islamic", "cat_music", "cat_flags", "cat_easy", "cat_science"]
+    "free_categories": ["cat_word", "cat_islamic", "cat_music", "cat_flags", "cat_easy", "cat_science"],
+    "trial_enabled": True,
+    "trial_team1_categories": ["cat_flags", "cat_easy", "cat_word"],
+    "trial_team2_categories": ["cat_islamic", "cat_science", "cat_music"],
+    "trial_questions_only": False,
 }
 
 @api_router.get("/settings")
@@ -1210,8 +1249,25 @@ async def upload_image(request: Request, file: UploadFile = File(...), admin=Dep
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ══════════════════════════════════════════════════════════════════════════════
-# AI QUESTION GENERATOR
+# AI QUESTION GENERATOR  (Google Gemini 2.0 Flash – direct REST)
 # ══════════════════════════════════════════════════════════════════════════════
+
+async def _gemini_generate(prompt: str) -> str:
+    api_key = os.environ.get("GEMINI_API_KEY", "")
+    if not api_key:
+        raise HTTPException(500, "GEMINI_API_KEY غير مضبوط في ملف البيئة")
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={api_key}"
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.post(url, json=payload)
+    if r.status_code != 200:
+        raise HTTPException(500, f"خطأ Gemini {r.status_code}: {r.text[:300]}")
+    data = r.json()
+    try:
+        return data["candidates"][0]["content"]["parts"][0]["text"]
+    except (KeyError, IndexError):
+        raise HTTPException(500, "لم يُرسل Gemini استجابة نصية")
+
 
 @api_router.post("/ai/generate-questions")
 async def ai_generate_questions(body: dict, admin=Depends(get_admin)):
@@ -1219,61 +1275,48 @@ async def ai_generate_questions(body: dict, admin=Depends(get_admin)):
     difficulty   = int(body.get("difficulty", 300))
     count        = min(int(body.get("count", 10)), 20)
 
-    lm_key = os.environ.get("EMERGENT_LLM_KEY", "")
-    if not lm_key:
-        raise HTTPException(500, "مفتاح الذكاء الاصطناعي غير مضبوط")
-
     cat = await db.categories.find_one({"id": category_id}, {"_id": 0})
     cat_name   = cat.get("name", "عامة") if cat else "عامة"
-    diff_label = "سهل ومباشر" if difficulty == 300 else ("متوسط الصعوبة" if difficulty == 600 else "صعب ومتحدٍّ")
-
-    chat = LlmChat(
-        api_key=lm_key,
-        session_id=f"qgen_{uuid.uuid4()}",
-        system_message=(
-            "أنت خبير في إنشاء أسئلة مسابقات ترفيهية باللغة العربية السعودية. "
-            "تُنشئ أسئلة جذابة، حماسية، متنوعة، وسهلة الفهم للجميع. "
-            "الإجابات يجب أن تكون قصيرة جداً (كلمة أو كلمتين). "
-            "أرجع JSON صالح فقط بدون أي نص إضافي أو markdown."
-        )
-    ).with_model("gemini", "gemini-3-flash-preview")
+    diff_label = "سهلة ومباشرة" if difficulty == 300 else ("متوسطة الصعوبة" if difficulty == 600 else "صعبة ومتحدية")
 
     prompt = (
-        f'أنشئ بالضبط {count} سؤال ترفيهي لفئة "{cat_name}" بمستوى ({diff_label}).\n\n'
-        "شروط:\n"
-        "- باللغة العربية فقط\n"
-        "- متنوعة وغير متكررة\n"
-        "- الإجابة كلمة واحدة أو كلمتين فقط\n"
-        "- أسئلة واضحة وممتعة\n\n"
-        "أرجع JSON array فقط بهذا الشكل:\n"
-        '[{"text":"نص السؤال؟","answer":"الإجابة"}]'
+        f"أنشئ بالضبط {count} سؤال ترفيهي لفئة \"{cat_name}\" بمستوى ({diff_label}).\n\n"
+        "شروط أساسية:\n"
+        "- اكتب باللغة العربية الفصيحة أو العامية السعودية\n"
+        "- الأسئلة حماسية، متنوعة، وغير متكررة\n"
+        "- الإجابة قصيرة جداً: كلمة أو كلمتان فقط\n"
+        "- لا تُضِف أي شرح أو ترقيم خارج الـ JSON\n\n"
+        "أرجع JSON array فقط بالشكل التالي وبدون أي نص قبله أو بعده:\n"
+        '[{"text":"نص السؤال؟","answer":"الإجابة"},{"text":"سؤال آخر؟","answer":"إجابة"}]'
     )
 
+    raw_text = await _gemini_generate(prompt)
+    m = re.search(r'\[.*\]', raw_text, re.DOTALL)
+    if not m:
+        raise HTTPException(500, "لم يُرسل Gemini JSON صالحاً")
     try:
-        response = await chat.send_message(UserMessage(text=prompt))
-        m = re.search(r'\[.*?\]', response, re.DOTALL)
-        if not m:
-            raise HTTPException(500, "لم يُنتج الذكاء الاصطناعي نتيجة صالحة")
-        raw = json.loads(m.group())
-        questions = []
-        for q in raw[:count]:
-            txt = (q.get("text") or "").strip()
-            ans = (q.get("answer") or "").strip()
-            if txt and ans:
-                questions.append({
-                    "id":               str(uuid.uuid4()),
-                    "category_id":      category_id,
-                    "difficulty":       difficulty,
-                    "text":             txt,
-                    "answer":           ans,
-                    "image_url":        "",
-                    "answer_image_url": "",
-                    "question_type":    "text",
-                    "created_at":       datetime.now(timezone.utc).isoformat(),
-                })
-        return {"questions": questions, "count": len(questions)}
+        raw_list = json.loads(m.group())
     except json.JSONDecodeError:
-        raise HTTPException(500, "فشل في قراءة الأسئلة المولّدة")
+        raise HTTPException(500, "فشل في قراءة JSON المُرسَل من Gemini")
+
+    questions = []
+    for q in raw_list[:count]:
+        txt = (q.get("text") or "").strip()
+        ans = (q.get("answer") or "").strip()
+        if txt and ans:
+            questions.append({
+                "id":               str(uuid.uuid4()),
+                "category_id":      category_id,
+                "difficulty":       difficulty,
+                "text":             txt,
+                "answer":           ans,
+                "image_url":        "",
+                "answer_image_url": "",
+                "question_type":    "text",
+                "is_experimental":  True,
+                "created_at":       datetime.now(timezone.utc).isoformat(),
+            })
+    return {"questions": questions, "count": len(questions)}
 
 
 @api_router.post("/ai/save-questions")
