@@ -291,6 +291,7 @@ export default function AdminDashboard() {
                     <span className="text-sm font-bold truncate">{cat.name}</span>
                   </div>
                   <button
+                    data-testid={`edit-cat-${cat.id}`}
                     onClick={(e) => { e.stopPropagation(); handleEditCat(cat); }}
                     className="text-primary/40 hover:text-primary/70 text-xs px-1"
                     title="تعديل"

@@ -36,7 +36,7 @@ HUJJAH is a competitive team trivia social game for Saudi gatherings, now transf
 
 ## What's Been Implemented
 
-### Backend (FastAPI/MongoDB) - COMPLETE as of 2026-03-10
+### Backend (FastAPI/MongoDB) - COMPLETE as of 2026-03-12
 - User Auth: JWT register/login (/api/auth/register, /api/auth/login, /api/auth/me)
 - Admin Auth: Password-based JWT (/api/admin/login, /api/admin/verify)
 - Categories API: Full CRUD (10 categories seeded)
@@ -47,8 +47,11 @@ HUJJAH is a competitive team trivia social game for Saudi gatherings, now transf
 - Stripe integration: Checkout session + webhook + status check
 - Subscription Plans: Monthly ($9.99) + Annual ($79.99)
 - Seed endpoint: POST /api/seed with force=true
+- **NEW** Game Settings API: GET/PUT /api/settings (default timer, word timers)
+- **NEW** File Upload API: POST /api/upload (PNG/JPG/WEBP, max 5MB)
+- Static file serving: /api/static/uploads/
 
-### Frontend (React RTL) - COMPLETE as of 2026-03-10
+### Frontend (React RTL) - COMPLETE as of 2026-03-12
 - HomePage: User bar (login/signup links), categories grid (10), subscription notice for free users
 - LoginPage: Email + password form, JWT stored in localStorage
 - SignupPage: Email + username + password + confirm form
@@ -57,15 +60,23 @@ HUJJAH is a competitive team trivia social game for Saudi gatherings, now transf
 - TeamSetupPage: Enter team names, VS divider
 - CategorySelectPage: Team 1 then Team 2 each pick 3 categories
 - GameBoardPage: Dark Jeopardy grid, animated ScoreCounter, confetti on win
-- QuestionPage: 75s timer, tension sound, answer reveal, team point buttons, QR for secret word
+  - **NEW** Dark Mode toggle (☀️/🌙) with LIGHT/DARK palettes
+  - **NEW** Warm gold/brown/red score buttons (not white)
+- QuestionPage: Dynamic timer from settings, tension sound, answer reveal, team point buttons, QR for secret word
 - SecretWordPage: Mobile QR scan page
 - AdminLoginPage: Password-protected entry
-- AdminDashboard: 3 tabs (Questions/Users/Analytics), full CRUD, user management
+- AdminDashboard: 4 tabs (Questions/Users/Analytics/Settings), full CRUD
+  - **NEW** Settings tab: default timer + ولا كلمة timers (Easy/Medium/Hard)
+  - **NEW** Image upload buttons in question form (question + answer images)
+  - **NEW** Image upload buttons in category form
+  - **NEW** Category edit (full CRUD: Create, Read, Update, Delete)
 
 ### GameContext
 - User state: currentUser, userToken (from localStorage)
 - Auth: loginUser, registerUser, logoutUser, refreshUser
 - Game: createSession (passes user_id if logged in), getNextQuestion (passes Bearer token for premium)
+- **NEW** darkMode state + toggleDarkMode
+- **NEW** gameSettings state (default_timer, word_timers) loaded from /api/settings
 
 ### Data
 - 10 Categories: اعلام دول، معلومات سهلة، السعودية، اسلامي، علوم بسيطة، شعارات، ولا كلمة، ثقافة شعبية، رياضة، موسيقى وفن
@@ -101,13 +112,19 @@ HUJJAH is a competitive team trivia social game for Saudi gatherings, now transf
 - [x] TV-style question screen (wide, full-height)
 - [x] SAR pricing: 19.99 SAR/month, 149.99 SAR/year
 - [x] Board fills full screen height/width
+- [x] Dark mode toggle in GameBoardPage (LIGHT/DARK palettes)
+- [x] Admin timer control: default_timer + ولا كلمة timers (Easy/Medium/Hard)
+- [x] Score buttons warm gold/brown/red gradient (not white)
+- [x] Image file upload system (PNG/JPG/WEBP, max 5MB)
+- [x] Category full CRUD (Create/Edit/Delete with image upload)
+- [x] Settings tab in Admin dashboard
 
 ### P1 (High priority - next)
 - [ ] Generate 1000+ questions via AI (currently 450)
 - [ ] Real Stripe key for production payments
-- [ ] Image upload support (currently URL-based)
 - [ ] Sound effects library (correct/wrong answer sounds)
 - [ ] Export/print game results
+- [ ] Difficulty balance review: ensure 900-point questions are challenging but not frustrating
 
 ### P2 (Nice to have)
 - [ ] Multiple game room support
@@ -149,6 +166,9 @@ HUJJAH is a competitive team trivia social game for Saudi gatherings, now transf
 - GET /api/subscription/status/{stripe_session_id}
 - POST /api/webhook/stripe
 - POST /api/seed [admin]
+- GET /api/settings
+- PUT /api/settings [admin]
+- POST /api/upload [admin]
 
 ## Deployment Notes
 - Run `POST /api/seed?force=true` with admin token to seed data
