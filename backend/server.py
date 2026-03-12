@@ -1272,8 +1272,10 @@ async def _gemini_generate(prompt: str) -> str:
 @api_router.post("/ai/generate-questions")
 async def ai_generate_questions(body: dict, admin=Depends(get_admin)):
     category_id = body.get("category_id", "")
-    difficulty   = int(body.get("difficulty", 300))
-    count        = min(int(body.get("count", 10)), 20)
+    raw_diff = body.get("difficulty", 300)
+    diff_map = {"easy": 300, "medium": 600, "hard": 900, "سهل": 300, "متوسط": 600, "صعب": 900}
+    difficulty = diff_map.get(str(raw_diff).lower(), None) or (int(raw_diff) if str(raw_diff).isdigit() else 300)
+    count = min(int(body.get("count", 10)), 20)
 
     cat = await db.categories.find_one({"id": category_id}, {"_id": 0})
     cat_name   = cat.get("name", "عامة") if cat else "عامة"
