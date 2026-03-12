@@ -303,80 +303,125 @@ export default function GameBoardPage() {
 
       {/* ── Score Bar ── */}
       <div
-        className="shrink-0 flex items-center justify-between px-3 py-2 border-b"
+        className="shrink-0 border-b"
         style={{ background: P.scoreBg, borderColor: P.scoreBorder }}
       >
-        {/* Team 1 */}
-        <div
-          data-testid="team1-score"
-          className="flex items-center gap-2 rounded-2xl px-3 py-1.5"
-          style={{ background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.3)" }}
-        >
-          <span className="text-red-300 text-xs font-black truncate max-w-[80px] hidden sm:block">
-            🔴 {session?.team1_name}
-          </span>
-          <span className="text-red-300 text-xs sm:hidden">🔴</span>
-          <span className="text-2xl md:text-3xl font-black">
-            <ScoreCounter value={scores.team1} dark={darkMode} />
-          </span>
-        </div>
+        <div className="flex items-center justify-between px-3 md:px-5 py-2 md:py-3 gap-2 md:gap-4">
 
-        {/* Center */}
-        <div className="flex flex-col items-center gap-0.5">
-          <div className="text-yellow-200 font-black text-xl" style={{ fontFamily: "Cairo, sans-serif" }}>
-            حُجّة
-          </div>
-          {/* Turn Indicator */}
+          {/* ── Team 1 Score Block ── */}
           <div
-            data-testid="turn-indicator"
-            className="flex items-center gap-1.5 px-3 py-1 rounded-full font-black text-xs transition-all duration-500"
+            data-testid="team1-score"
+            className="flex flex-col items-center justify-center rounded-2xl px-3 md:px-6 py-2 md:py-3 transition-all duration-500 flex-1"
             style={{
-              background: currentTurn === 1 ? "rgba(239,68,68,0.25)" : "rgba(59,130,246,0.25)",
-              border: `1.5px solid ${currentTurn === 1 ? "rgba(239,68,68,0.6)" : "rgba(59,130,246,0.6)"}`,
-              color: currentTurn === 1 ? "#fca5a5" : "#93c5fd",
+              background:  currentTurn === 1 ? "rgba(239,68,68,0.22)" : "rgba(239,68,68,0.07)",
+              border:      `2.5px solid ${currentTurn === 1 ? "rgba(239,68,68,0.85)" : "rgba(239,68,68,0.22)"}`,
+              boxShadow:   currentTurn === 1 ? "0 0 22px rgba(239,68,68,0.45), 0 0 50px rgba(239,68,68,0.15)" : "none",
+              minWidth:    "clamp(110px,16vw,240px)",
+              maxWidth:    "280px",
             }}
           >
-            <span>{currentTurn === 1 ? "🔴" : "🔵"}</span>
-            <span>دور {currentTurn === 1 ? session?.team1_name : session?.team2_name}</span>
+            <span
+              className="font-black text-red-300 leading-tight text-center truncate w-full text-center mb-0.5"
+              style={{ fontSize: "clamp(0.85rem, 2.2vw, 1.5rem)", maxWidth: "220px" }}
+            >
+              🔴 {session?.team1_name}
+            </span>
+            <span
+              className="font-black tabular-nums leading-none"
+              style={{ fontSize: "clamp(2rem, 4.5vw, 3.8rem)", color: "#F1E194" }}
+            >
+              <ScoreCounter value={scores.team1} dark={darkMode} />
+            </span>
           </div>
-          <div className="flex items-center gap-2">
-            {/* Dark Mode Toggle */}
-            <button
-              data-testid="dark-mode-toggle"
-              onClick={toggleDarkMode}
-              title={darkMode ? "الوضع الفاتح" : "الوضع الداكن"}
-              className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full transition-all duration-200"
+
+          {/* ── Center: Logo + LARGE Turn Indicator + Controls ── */}
+          <div className="flex flex-col items-center gap-1 shrink-0">
+            {/* Game title */}
+            <div
+              className="font-black text-yellow-200 leading-none"
+              style={{ fontSize: "clamp(1rem, 1.8vw, 1.4rem)", fontFamily: "Cairo, sans-serif" }}
+            >
+              حُجّة
+            </div>
+
+            {/* ═══ LARGE TURN INDICATOR ═══ */}
+            <div
+              data-testid="turn-indicator"
+              className="flex items-center gap-2 rounded-xl font-black transition-all duration-500 text-center"
               style={{
-                background: darkMode ? "rgba(120,170,90,0.25)" : "rgba(200,200,150,0.2)",
-                color: darkMode ? "#C7D3A4" : "#F1E194",
-                border: `1px solid ${darkMode ? "rgba(120,170,90,0.3)" : "rgba(241,225,148,0.2)"}`,
+                background:   currentTurn === 1 ? "rgba(239,68,68,0.25)" : "rgba(59,130,246,0.25)",
+                border:       `2.5px solid ${currentTurn === 1 ? "rgba(239,68,68,0.8)" : "rgba(59,130,246,0.8)"}`,
+                color:        currentTurn === 1 ? "#fca5a5" : "#93c5fd",
+                fontSize:     "clamp(0.75rem, 1.8vw, 1.2rem)",
+                padding:      "clamp(4px,0.7vh,10px) clamp(10px,1.5vw,20px)",
+                boxShadow:    currentTurn === 1 ? "0 0 18px rgba(239,68,68,0.4)" : "0 0 18px rgba(59,130,246,0.4)",
+                whiteSpace:   "nowrap",
               }}
             >
-              {darkMode ? "☀️ فاتح" : "🌙 داكن"}
-            </button>
-            <button
-              data-testid="end-game-btn"
-              onClick={() => setShowEndConfirm(true)}
-              className="text-yellow-200/30 text-[10px] hover:text-yellow-200/60 transition-colors"
-            >
-              إنهاء
-            </button>
-          </div>
-        </div>
+              <span style={{ fontSize: "clamp(0.9rem, 1.6vw, 1.2rem)" }}>{currentTurn === 1 ? "🔴" : "🔵"}</span>
+              <span>دور {currentTurn === 1 ? session?.team1_name : session?.team2_name}</span>
+            </div>
 
-        {/* Team 2 */}
-        <div
-          data-testid="team2-score"
-          className="flex items-center gap-2 rounded-2xl px-3 py-1.5"
-          style={{ background: "rgba(59,130,246,0.15)", border: "1px solid rgba(59,130,246,0.3)" }}
-        >
-          <span className="text-2xl md:text-3xl font-black">
-            <ScoreCounter value={scores.team2} dark={darkMode} />
-          </span>
-          <span className="text-blue-300 text-xs font-black truncate max-w-[80px] hidden sm:block">
-            {session?.team2_name} 🔵
-          </span>
-          <span className="text-blue-300 text-xs sm:hidden">🔵</span>
+            {/* Controls row */}
+            <div className="flex items-center gap-2 mt-0.5">
+              <button
+                data-testid="dark-mode-toggle"
+                onClick={toggleDarkMode}
+                title={darkMode ? "الوضع الفاتح" : "الوضع الداكن"}
+                className="flex items-center gap-1.5 font-bold rounded-full transition-all duration-200 hover:scale-105 active:scale-95"
+                style={{
+                  background: darkMode ? "rgba(120,170,90,0.3)" : "rgba(200,200,150,0.2)",
+                  color:      darkMode ? "#C7D3A4" : "#F1E194",
+                  border:     `1.5px solid ${darkMode ? "rgba(120,170,90,0.5)" : "rgba(241,225,148,0.3)"}`,
+                  fontSize:   "clamp(0.65rem, 1.2vw, 0.85rem)",
+                  padding:    "clamp(3px,0.5vh,7px) clamp(8px,1.2vw,14px)",
+                }}
+              >
+                <span>{darkMode ? "☀️" : "🌙"}</span>
+                <span>{darkMode ? "فاتح" : "داكن"}</span>
+              </button>
+              <button
+                data-testid="end-game-btn"
+                onClick={() => setShowEndConfirm(true)}
+                className="font-bold rounded-full transition-all duration-200 hover:scale-105 hover:opacity-80"
+                style={{
+                  color:    "rgba(241,225,148,0.4)",
+                  border:   "1px solid rgba(241,225,148,0.15)",
+                  fontSize: "clamp(0.6rem, 1vw, 0.75rem)",
+                  padding:  "clamp(3px,0.4vh,6px) clamp(6px,1vw,12px)",
+                }}
+              >
+                إنهاء
+              </button>
+            </div>
+          </div>
+
+          {/* ── Team 2 Score Block ── */}
+          <div
+            data-testid="team2-score"
+            className="flex flex-col items-center justify-center rounded-2xl px-3 md:px-6 py-2 md:py-3 transition-all duration-500 flex-1"
+            style={{
+              background:  currentTurn === 2 ? "rgba(59,130,246,0.22)" : "rgba(59,130,246,0.07)",
+              border:      `2.5px solid ${currentTurn === 2 ? "rgba(59,130,246,0.85)" : "rgba(59,130,246,0.22)"}`,
+              boxShadow:   currentTurn === 2 ? "0 0 22px rgba(59,130,246,0.45), 0 0 50px rgba(59,130,246,0.15)" : "none",
+              minWidth:    "clamp(110px,16vw,240px)",
+              maxWidth:    "280px",
+            }}
+          >
+            <span
+              className="font-black text-blue-300 leading-tight text-center truncate w-full text-center mb-0.5"
+              style={{ fontSize: "clamp(0.85rem, 2.2vw, 1.5rem)", maxWidth: "220px" }}
+            >
+              {session?.team2_name} 🔵
+            </span>
+            <span
+              className="font-black tabular-nums leading-none"
+              style={{ fontSize: "clamp(2rem, 4.5vw, 3.8rem)", color: "#F1E194" }}
+            >
+              <ScoreCounter value={scores.team2} dark={darkMode} />
+            </span>
+          </div>
+
         </div>
       </div>
 
@@ -405,14 +450,16 @@ export default function GameBoardPage() {
       </div>
 
       {/* ── Legend ── */}
-      <div className="shrink-0 flex justify-center gap-6 pb-1.5">
-        <div className="flex items-center gap-1.5">
-          <div className="w-3 h-1.5 rounded-full bg-red-500/60" />
-          <span className="text-xs font-bold" style={{ color: P.textSub }}>{session?.team1_name}</span>
+      <div className="shrink-0 flex justify-center gap-6 pb-1.5 pt-0.5">
+        <div className={`flex items-center gap-2 px-3 py-1 rounded-full transition-all duration-500 ${currentTurn === 1 ? "bg-red-500/20" : ""}`}>
+          <div className="w-3 h-3 rounded-full bg-red-500" />
+          <span className="font-bold" style={{ color: P.textSub, fontSize: "clamp(0.65rem, 1.2vw, 0.85rem)" }}>{session?.team1_name}</span>
+          {currentTurn === 1 && <span className="text-red-400 font-black" style={{ fontSize: "clamp(0.55rem, 1vw, 0.7rem)" }}>← دوره</span>}
         </div>
-        <div className="flex items-center gap-1.5">
-          <div className="w-3 h-1.5 rounded-full bg-blue-500/60" />
-          <span className="text-xs font-bold" style={{ color: P.textSub }}>{session?.team2_name}</span>
+        <div className={`flex items-center gap-2 px-3 py-1 rounded-full transition-all duration-500 ${currentTurn === 2 ? "bg-blue-500/20" : ""}`}>
+          <div className="w-3 h-3 rounded-full bg-blue-500" />
+          <span className="font-bold" style={{ color: P.textSub, fontSize: "clamp(0.65rem, 1.2vw, 0.85rem)" }}>{session?.team2_name}</span>
+          {currentTurn === 2 && <span className="text-blue-400 font-black" style={{ fontSize: "clamp(0.55rem, 1vw, 0.7rem)" }}>← دوره</span>}
         </div>
       </div>
 

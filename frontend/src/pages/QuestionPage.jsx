@@ -117,35 +117,62 @@ export default function QuestionPage() {
       style={{ minHeight: "100svh", background: "radial-gradient(ellipse at top, #3D0810 0%, #1a0205 40%, #0f0102 100%)" }}
     >
       {/* ── Top Bar ── */}
-      <div className="flex items-center justify-between px-4 py-2 shrink-0">
+      <div className="flex items-center justify-between px-3 md:px-5 py-2 shrink-0 gap-2">
+        {/* Back button */}
         <button
           data-testid="back-to-board"
           onClick={handleBack}
-          className="text-secondary/40 hover:text-secondary text-sm transition-colors"
+          className="text-secondary/40 hover:text-secondary transition-colors font-bold shrink-0"
+          style={{ fontSize: "clamp(0.75rem, 1.5vw, 1rem)" }}
         >
           ← اللوحة
         </button>
-        <div className="flex items-center gap-3">
-          <span className={`text-xs font-bold ${slotColor}`}>{slotLabel}</span>
-          <span className="text-secondary/30 text-xs">|</span>
-          <span className="text-secondary/60 text-xs">{catName}</span>
-          <span className="text-secondary/30 text-xs">|</span>
+
+        {/* Category + Difficulty info - center */}
+        <div className="flex items-center gap-2 flex-1 justify-center flex-wrap">
+          <span className="text-secondary/60 font-bold" style={{ fontSize: "clamp(0.7rem, 1.3vw, 0.9rem)" }}>{catName}</span>
+          <span className="text-secondary/20">|</span>
           <span
-            className="text-sm font-black"
-            style={{ color: question.difficulty === 300 ? "#6ee7b7" : question.difficulty === 600 ? "#fcd34d" : "#f87171" }}
+            className="font-black"
+            style={{
+              color: question.difficulty === 300 ? "#6ee7b7" : question.difficulty === 600 ? "#fcd34d" : "#f87171",
+              fontSize: "clamp(0.7rem, 1.3vw, 0.9rem)"
+            }}
           >
             {question.difficulty} نقطة
           </span>
         </div>
-        <div className="flex gap-4 text-xs">
+
+        {/* Scores - right side - LARGER */}
+        <div className="flex gap-3 shrink-0 items-center">
           <div className="text-center">
-            <div className="text-red-300/70 font-bold">{session?.team1_name}</div>
-            <div className="text-secondary font-black text-base">{session?.team1_score || 0}</div>
+            <div
+              className="text-red-300/80 font-black leading-none"
+              style={{ fontSize: "clamp(0.65rem, 1.2vw, 0.85rem)" }}
+            >
+              🔴 {session?.team1_name}
+            </div>
+            <div
+              className="text-secondary font-black leading-none"
+              style={{ fontSize: "clamp(1.1rem, 2.2vw, 1.6rem)" }}
+            >
+              {session?.team1_score || 0}
+            </div>
           </div>
-          <div className="text-secondary/20 flex items-center">VS</div>
+          <div className="text-secondary/25 font-bold text-base">VS</div>
           <div className="text-center">
-            <div className="text-blue-300/70 font-bold">{session?.team2_name}</div>
-            <div className="text-secondary font-black text-base">{session?.team2_score || 0}</div>
+            <div
+              className="text-blue-300/80 font-black leading-none"
+              style={{ fontSize: "clamp(0.65rem, 1.2vw, 0.85rem)" }}
+            >
+              {session?.team2_name} 🔵
+            </div>
+            <div
+              className="text-secondary font-black leading-none"
+              style={{ fontSize: "clamp(1.1rem, 2.2vw, 1.6rem)" }}
+            >
+              {session?.team2_score || 0}
+            </div>
           </div>
         </div>
       </div>
