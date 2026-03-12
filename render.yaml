@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: hujjah-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: MONGO_URL
+        sync: false
+      - key: DB_NAME
+        value: hujjah_db
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ADMIN_PASSWORD
+        value: hujjah2024
+      - key: CORS_ORIGINS
+        value: "*"
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: STRIPE_API_KEY
+        value: sk_test_emergent
