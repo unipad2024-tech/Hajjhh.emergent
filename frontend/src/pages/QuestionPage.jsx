@@ -7,8 +7,8 @@ import { toast } from "sonner";
 export default function QuestionPage() {
   const navigate = useNavigate();
   const { state } = useLocation();
-  const { session, updateScore, gameSettings } = useGame();
-  const { question, catName, slot } = state || {};
+  const { session, updateScore, gameSettings, switchTurn } = useGame();
+  const { question, catName, slot, turnTeam } = state || {};
 
   // ─── Determine timer duration from settings ───────────────────────────────
   const isWordCat = question?.category_id === "cat_word" || question?.question_type === "secret_word";
@@ -97,7 +97,7 @@ export default function QuestionPage() {
   };
 
   const handleSkip = () => setAssigned(true);
-  const handleBack = () => navigate("/game");
+  const handleBack = () => { switchTurn(); navigate("/game"); };
 
   if (!question) { navigate("/game"); return null; }
 
@@ -242,27 +242,29 @@ export default function QuestionPage() {
                 {!assigned && (
                   <div className="mt-4">
                     <div className="text-secondary/50 text-sm text-center mb-3">من أجاب صح؟</div>
-                    <div className="flex gap-3 justify-center flex-wrap">
+                    <div className="flex gap-4 justify-center flex-wrap">
                       <button
                         data-testid="assign-team1-btn"
                         onClick={() => handleAssign(1)}
-                        className="flex flex-col items-center bg-gradient-to-br from-red-700 to-red-950 border-2 border-red-400/50 text-white px-5 py-3 rounded-2xl font-bold hover:scale-105 hover:shadow-[0_0_25px_rgba(239,68,68,0.5)] transition-all min-w-[110px]"
+                        className="flex flex-col items-center justify-center bg-gradient-to-br from-red-700 to-red-950 border-2 border-red-400/50 text-white px-8 py-5 rounded-2xl font-bold hover:scale-105 hover:shadow-[0_0_35px_rgba(239,68,68,0.6)] transition-all"
+                        style={{ minWidth: "clamp(140px,20vw,220px)" }}
                       >
-                        <span className="text-sm">🔴 {session?.team1_name}</span>
-                        <span className="text-2xl font-black text-red-200">+{question.difficulty}</span>
+                        <span className="text-base md:text-lg mb-1">🔴 {session?.team1_name}</span>
+                        <span className="text-3xl md:text-4xl font-black text-red-200">+{question.difficulty}</span>
                       </button>
                       <button
                         data-testid="assign-team2-btn"
                         onClick={() => handleAssign(2)}
-                        className="flex flex-col items-center bg-gradient-to-br from-blue-700 to-blue-950 border-2 border-blue-400/50 text-white px-5 py-3 rounded-2xl font-bold hover:scale-105 hover:shadow-[0_0_25px_rgba(59,130,246,0.5)] transition-all min-w-[110px]"
+                        className="flex flex-col items-center justify-center bg-gradient-to-br from-blue-700 to-blue-950 border-2 border-blue-400/50 text-white px-8 py-5 rounded-2xl font-bold hover:scale-105 hover:shadow-[0_0_35px_rgba(59,130,246,0.6)] transition-all"
+                        style={{ minWidth: "clamp(140px,20vw,220px)" }}
                       >
-                        <span className="text-sm">🔵 {session?.team2_name}</span>
-                        <span className="text-2xl font-black text-blue-200">+{question.difficulty}</span>
+                        <span className="text-base md:text-lg mb-1">🔵 {session?.team2_name}</span>
+                        <span className="text-3xl md:text-4xl font-black text-blue-200">+{question.difficulty}</span>
                       </button>
                       <button
                         data-testid="skip-points-btn"
                         onClick={handleSkip}
-                        className="border border-secondary/20 text-secondary/40 px-4 py-3 rounded-2xl font-bold text-sm hover:text-secondary/70 transition-all self-center"
+                        className="border border-secondary/20 text-secondary/40 px-6 py-5 rounded-2xl font-bold text-sm hover:text-secondary/70 hover:border-secondary/40 transition-all self-center"
                       >
                         لا أحد
                       </button>

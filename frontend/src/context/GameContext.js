@@ -17,6 +17,7 @@ export const GameProvider = ({ children }) => {
   const [userToken, setUserToken] = useState(() => localStorage.getItem("hujjah_user_token") || null);
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem("hujjah_dark") === "true");
   const [gameSettings, setGameSettings] = useState({ default_timer: 65, word_timers: { "300": 80, "600": 60, "900": 45 } });
+  const [currentTurn, setCurrentTurn] = useState(() => parseInt(localStorage.getItem("hujjah_turn") || "1"));
 
   // Load settings on mount
   useEffect(() => {
@@ -27,6 +28,17 @@ export const GameProvider = ({ children }) => {
     const next = !darkMode;
     setDarkMode(next);
     localStorage.setItem("hujjah_dark", String(next));
+  };
+
+  const switchTurn = () => {
+    const next = currentTurn === 1 ? 2 : 1;
+    setCurrentTurn(next);
+    localStorage.setItem("hujjah_turn", String(next));
+  };
+
+  const resetTurn = () => {
+    setCurrentTurn(1);
+    localStorage.setItem("hujjah_turn", "1");
   };
 
   const saveSession = (s) => {
@@ -121,13 +133,14 @@ export const GameProvider = ({ children }) => {
     }
   };
 
-  const resetGame = () => saveSession(null);
+  const resetGame = () => { saveSession(null); resetTurn(); };
 
   return (
     <GameContext.Provider value={{
-      session, loading, currentUser, userToken, darkMode, gameSettings,
+      session, loading, currentUser, userToken, darkMode, gameSettings, currentTurn,
       createSession, updateSession, getNextQuestion, updateScore,
-      resetGame, saveSession, loginUser, registerUser, logoutUser, refreshUser, toggleDarkMode
+      resetGame, saveSession, loginUser, registerUser, logoutUser, refreshUser,
+      toggleDarkMode, switchTurn, resetTurn
     }}>
       {children}
     </GameContext.Provider>

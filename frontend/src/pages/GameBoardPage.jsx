@@ -98,8 +98,8 @@ function ScoreBtn({ catId, diff, slot, used, clicking, onClick, dark }) {
       style={{
         background: used ? (dark ? "rgba(100,120,80,0.2)" : "#d1c9b5") : (dark ? ds.darkBg : ds.bg),
         boxShadow: used ? "none" : `0 5px 14px ${ds.shadow}, 0 2px 6px rgba(0,0,0,0.2)`,
-        padding: "clamp(6px,1.2vh,14px) clamp(4px,0.8vw,10px)",
-        fontSize: "clamp(1.1rem, 2.8vw, 2.1rem)",
+        padding: "clamp(8px,1.5vh,18px) clamp(4px,0.8vw,10px)",
+        fontSize: "clamp(1.4rem, 3.2vw, 2.8rem)",
         color: used ? (dark ? "rgba(140,160,100,0.35)" : "rgba(80,80,60,0.35)") : "white",
         letterSpacing: "-0.02em",
         lineHeight: 1,
@@ -137,7 +137,7 @@ function CategoryCard({ cat, session, usedTiles, clickingTile, onTileClick, dark
       <div className="flex-1 flex flex-row items-stretch gap-1.5 px-1.5 py-2">
 
         {/* Left column: slot 1 buttons */}
-        <div className="flex flex-col justify-around gap-1.5 shrink-0" style={{ minWidth: "clamp(55px,9vw,110px)" }}>
+        <div className="flex flex-col justify-around gap-1.5 shrink-0" style={{ minWidth: "clamp(65px,11vw,140px)" }}>
           {DIFFICULTIES.map(diff => (
             <ScoreBtn
               key={`${cat.id}_${diff}_1`}
@@ -153,10 +153,10 @@ function CategoryCard({ cat, session, usedTiles, clickingTile, onTileClick, dark
         {/* Center: large image + title */}
         <div className="flex-1 flex flex-col items-center justify-center min-w-0 py-1">
           <div
-            className="rounded-xl overflow-hidden flex items-center justify-center mb-1.5"
+            className="rounded-xl overflow-hidden flex items-center justify-center mb-2"
             style={{
-              width:  "clamp(80px, 15vw, 200px)",
-              height: "clamp(80px, 15vw, 200px)",
+              width:  "clamp(90px, 16vw, 230px)",
+              height: "clamp(90px, 16vw, 230px)",
               background: `linear-gradient(135deg, ${cat.color || "#5B0E14"}44, ${cat.color || "#5B0E14"}11)`,
               boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
               flexShrink: 0,
@@ -170,7 +170,7 @@ function CategoryCard({ cat, session, usedTiles, clickingTile, onTileClick, dark
                 onError={(e) => { e.target.style.display = "none"; }}
               />
             ) : (
-              <span style={{ fontSize: "clamp(2.5rem, 5vw, 4rem)" }}>{cat.icon || "🎯"}</span>
+              <span style={{ fontSize: "clamp(3rem, 6vw, 5rem)" }}>{cat.icon || "🎯"}</span>
             )}
           </div>
 
@@ -179,9 +179,9 @@ function CategoryCard({ cat, session, usedTiles, clickingTile, onTileClick, dark
             className="font-black text-center leading-tight"
             style={{
               color: P.textMain,
-              fontSize: "clamp(0.65rem, 1.5vw, 1rem)",
+              fontSize: "clamp(0.7rem, 1.6vw, 1.1rem)",
               fontFamily: "Cairo, sans-serif",
-              maxWidth: "180px",
+              maxWidth: "200px",
             }}
           >
             {cat.name}
@@ -197,7 +197,7 @@ function CategoryCard({ cat, session, usedTiles, clickingTile, onTileClick, dark
         </div>
 
         {/* Right column: slot 2 buttons */}
-        <div className="flex flex-col justify-around gap-1.5 shrink-0" style={{ minWidth: "clamp(55px,9vw,110px)" }}>
+        <div className="flex flex-col justify-around gap-1.5 shrink-0" style={{ minWidth: "clamp(65px,11vw,140px)" }}>
           {DIFFICULTIES.map(diff => (
             <ScoreBtn
               key={`${cat.id}_${diff}_2`}
@@ -217,7 +217,7 @@ function CategoryCard({ cat, session, usedTiles, clickingTile, onTileClick, dark
 /* ═══════════════════════════════════════════════ Main Board ═══ */
 export default function GameBoardPage() {
   const navigate = useNavigate();
-  const { session, resetGame, darkMode, toggleDarkMode } = useGame();
+  const { session, resetGame, darkMode, toggleDarkMode, currentTurn, switchTurn } = useGame();
   const [categories, setCategories]     = useState([]);
   const [usedTiles, setUsedTiles]       = useState(new Set());
   const [loading, setLoading]           = useState(true);
@@ -273,7 +273,7 @@ export default function GameBoardPage() {
       setUsedTiles(newUsed);
       localStorage.setItem(`used_${session.id}`, JSON.stringify([...newUsed]));
       navigate("/question", {
-        state: { question: q, catId, difficulty, slot, catName: categories.find(c => c.id === catId)?.name }
+        state: { question: q, catId, difficulty, slot, catName: categories.find(c => c.id === catId)?.name, turnTeam: currentTurn }
       });
     } catch {
       toast.error("لا يوجد أسئلة متاحة لهذه الفئة!");
@@ -325,6 +325,19 @@ export default function GameBoardPage() {
         <div className="flex flex-col items-center gap-0.5">
           <div className="text-yellow-200 font-black text-xl" style={{ fontFamily: "Cairo, sans-serif" }}>
             حُجّة
+          </div>
+          {/* Turn Indicator */}
+          <div
+            data-testid="turn-indicator"
+            className="flex items-center gap-1.5 px-3 py-1 rounded-full font-black text-xs transition-all duration-500"
+            style={{
+              background: currentTurn === 1 ? "rgba(239,68,68,0.25)" : "rgba(59,130,246,0.25)",
+              border: `1.5px solid ${currentTurn === 1 ? "rgba(239,68,68,0.6)" : "rgba(59,130,246,0.6)"}`,
+              color: currentTurn === 1 ? "#fca5a5" : "#93c5fd",
+            }}
+          >
+            <span>{currentTurn === 1 ? "🔴" : "🔵"}</span>
+            <span>دور {currentTurn === 1 ? session?.team1_name : session?.team2_name}</span>
           </div>
           <div className="flex items-center gap-2">
             {/* Dark Mode Toggle */}

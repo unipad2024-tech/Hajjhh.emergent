@@ -1,33 +1,12 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { useNavigate } from "react-router-dom";
-import axios from "axios";
 import { useGame } from "@/context/GameContext";
-
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
-
-const CAT_META = {
-  cat_flags:   { icon:"🏳️", color:"#166534" },
-  cat_easy:    { icon:"💡", color:"#1e40af" },
-  cat_saudi:   { icon:"🇸🇦", color:"#5B0E14" },
-  cat_islamic: { icon:"☪️", color:"#065f46" },
-  cat_science: { icon:"🔬", color:"#4c1d95" },
-  cat_logos:   { icon:"🏷️", color:"#7c2d12" },
-  cat_word:    { icon:"🤫", color:"#4a044e" },
-  cat_culture: { icon:"🎬", color:"#831843" },
-  cat_sports:  { icon:"⚽", color:"#134e4a" },
-  cat_music:   { icon:"🎵", color:"#1e3a5f" },
-};
 
 const DARK_BG = { background: "radial-gradient(ellipse at top, #3D0810 0%, #1a0205 40%, #0f0102 100%)" };
 
 export default function HomePage() {
   const navigate = useNavigate();
   const { currentUser, logoutUser } = useGame();
-  const [categories, setCategories] = useState([]);
-
-  useEffect(() => {
-    axios.get(`${API}/categories`).then(({ data }) => setCategories(data)).catch(() => {});
-  }, []);
 
   const isPremium = currentUser?.subscription_type === "premium";
 
@@ -160,9 +139,9 @@ export default function HomePage() {
           style={{animationDelay:"0.3s"}}
         >
           {[
-            { n:"١", t:"سمّوا الفرق",    d:"كل فريق يختار اسمه" },
-            { n:"٢", t:"اختاروا الفئات", d:"٣ فئات لكل فريق"    },
-            { n:"٣", t:"العب وانتصر",    d:"أجب وجمّع النقاط"    },
+            { n:"1", t:"سمّوا الفرق",    d:"كل فريق يختار اسمه" },
+            { n:"2", t:"اختاروا الفئات", d:"3 فئات لكل فريق"    },
+            { n:"3", t:"العب وانتصر",    d:"أجب وجمّع النقاط"    },
           ].map(s => (
             <div key={s.n} className="bg-primary/40 border border-secondary/15 rounded-xl p-3 text-center">
               <div className="text-secondary text-2xl font-black mb-1">{s.n}</div>
@@ -171,31 +150,6 @@ export default function HomePage() {
             </div>
           ))}
         </div>
-
-        {/* ── Categories ── */}
-        {categories.length > 0 && (
-          <div className="w-full max-w-3xl animate-fade-in-up" style={{animationDelay:"0.4s"}}>
-            <h2 className="text-secondary/70 text-center text-sm font-bold uppercase tracking-widest mb-3">الفئات</h2>
-            <div className="grid grid-cols-5 md:grid-cols-10 gap-2 md:gap-3">
-              {categories.map((cat, i) => {
-                const m = CAT_META[cat.id] || { icon:"🎯", color:"#5B0E14" };
-                return (
-                  <div
-                    key={cat.id}
-                    className="rounded-xl p-2 md:p-3 text-center border border-secondary/15 hover:border-secondary/50 hover:scale-105 transition-all duration-300 cursor-default"
-                    style={{
-                      background:`linear-gradient(145deg, ${m.color}cc, ${m.color}33)`,
-                      animationDelay:`${0.05*i}s`,
-                    }}
-                  >
-                    <div className="text-2xl md:text-3xl mb-1">{cat.icon || m.icon}</div>
-                    <div className="text-secondary text-[9px] md:text-[10px] font-bold leading-tight">{cat.name}</div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
 
         {/* ── Footer Links ── */}
         <div className="mt-10 flex items-center gap-4">

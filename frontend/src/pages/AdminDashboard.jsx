@@ -32,8 +32,16 @@ export default function AdminDashboard() {
   const [form, setForm] = useState(emptyQuestion);
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("questions");
-  const [gameSettings, setGameSettings] = useState({ default_timer: 65, word_timers: { "300": 80, "600": 60, "900": 45 } });
+  const [gameSettings, setGameSettings] = useState({ default_timer: 65, word_timers: { "300": 80, "600": 60, "900": 45 }, free_categories: [] });
   const [settingsSaved, setSettingsSaved] = useState(false);
+
+  // AI Generator state
+  const [aiCatId, setAiCatId] = useState("");
+  const [aiDiff, setAiDiff] = useState(300);
+  const [aiCount, setAiCount] = useState(10);
+  const [aiGenerating, setAiGenerating] = useState(false);
+  const [aiQuestions, setAiQuestions] = useState([]);
+  const [aiSaving, setAiSaving] = useState(false);
 
   // New category form
   const [catForm, setCatForm] = useState({ name: "", icon: "", description: "", is_special: false, color: "#5B0E14", image_url: "" });
@@ -199,6 +207,36 @@ export default function AdminDashboard() {
     toast.success("تم الحذف");
   };
 
+  const handleAiGenerate = async () => {
+    if (!aiCatId) { toast.error("اختر الفئة أولاً"); return; }
+    setAiGenerating(true);
+    setAiQuestions([]);
+    try {
+      const { data } = await axios.post(`${API}/ai/generate-questions`, {
+        category_id: aiCatId, difficulty: aiDiff, count: aiCount
+      }, { headers });
+      setAiQuestions(data.questions);
+      toast.success(`تم توليد ${data.count} سؤال!`);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "خطأ في التوليد");
+    } finally {
+      setAiGenerating(false);
+    }
+  };
+
+  const handleAiSave = async () => {
+    if (!aiQuestions.length) return;
+    setAiSaving(true);
+    try {
+      const { data } = await axios.post(`${API}/ai/save-questions`, { questions: aiQuestions }, { headers });
+      toast.success(data.message);
+      setAiQuestions([]);
+      const { data: qs } = await axios.get(`${API}/questions`);
+      setQuestions(qs);
+    } catch { toast.error("خطأ في الحفظ"); }
+    finally { setAiSaving(false); }
+  };
+
   const handleUpdateUserSub = async (userId, subType) => {
     try {
       await axios.put(`${API}/admin/users/${userId}`, { subscription_type: subType }, { headers });
@@ -241,14 +279,14 @@ export default function AdminDashboard() {
         </div>
         <div className="flex gap-3 items-center">
           {/* Tabs */}
-          {["questions", "users", "analytics", "settings"].map((tab) => (
+          {["questions", "users", "analytics", "settings", "ai"].map((tab) => (
             <button
               key={tab}
               data-testid={`tab-${tab}`}
               onClick={() => setActiveTab(tab)}
               className={`text-sm px-3 py-1 rounded-lg font-bold transition-all ${activeTab === tab ? "bg-secondary text-primary" : "text-secondary/60 hover:text-secondary"}`}
             >
-              {tab === "questions" ? "الأسئلة" : tab === "users" ? "المستخدمون" : tab === "analytics" ? "الإحصاءات" : "الإعدادات"}
+              {tab === "questions" ? "الأسئلة" : tab === "users" ? "المستخدمون" : tab === "analytics" ? "الإحصاءات" : tab === "settings" ? "الإعدادات" : "🤖 توليد AI"}
             </button>
           ))}
           <span className="text-secondary/20">|</span>
@@ -609,6 +647,177 @@ export default function AdminDashboard() {
           <p className="text-center text-primary/30 text-xs mt-3">
             ملاحظة: التايمر الافتراضي 65 ثانية · ولا كلمة: سهل 80s، متوسط 60s، صعب 45s
           </p>
+
+          {/* Trial Mode - Free Categories */}
+          <div className="bg-white border border-primary/10 rounded-2xl p-6 mt-6">
+            <h3 className="font-black text-lg mb-1">الفئات المجانية (وضع التجربة)</h3>
+            <p className="text-primary/50 text-sm mb-4">الفئات المتاحة للمستخدمين المجانيين وغير المشتركين</p>
+            <div className="grid grid-cols-2 gap-2">
+              {categories.map(cat => {
+                const isFree = (gameSettings.free_categories || []).includes(cat.id);
+                return (
+                  <label key={cat.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${isFree ? "border-green-400 bg-green-50" : "border-primary/10 hover:border-primary/20"}`}>
+                    <input
+                      type="checkbox"
+                      checked={isFree}
+                      onChange={(e) => {
+                        const current = gameSettings.free_categories || [];
+                        const updated = e.target.checked
+                          ? [...current, cat.id]
+                          : current.filter(id => id !== cat.id);
+                        setGameSettings({ ...gameSettings, free_categories: updated });
+                      }}
+                      className="w-4 h-4 accent-green-600"
+                    />
+                    <span className="text-lg">{cat.icon || "🎯"}</span>
+                    <span className="text-sm font-bold text-primary">{cat.name}</span>
+                    {isFree && <span className="text-xs text-green-600 font-bold mr-auto">مجاني</span>}
+                  </label>
+                );
+              })}
+            </div>
+            <p className="text-xs text-primary/30 mt-3 text-center">
+              {(gameSettings.free_categories || []).length} فئة مجانية من أصل {categories.length}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* ── AI GENERATOR TAB ── */}
+      {activeTab === "ai" && (
+        <div className="p-6 max-w-3xl mx-auto">
+          <div className="flex items-center gap-3 mb-6">
+            <span className="text-3xl">🤖</span>
+            <div>
+              <h2 className="text-2xl font-black">توليد الأسئلة بالذكاء الاصطناعي</h2>
+              <p className="text-primary/50 text-sm">أنشئ أسئلة حماسية ومتنوعة بضغطة زر</p>
+            </div>
+          </div>
+
+          {/* Controls */}
+          <div className="bg-white border border-primary/10 rounded-2xl p-6 mb-5">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="text-sm font-bold text-primary/70 mb-2 block">الفئة</label>
+                <select
+                  data-testid="ai-category-select"
+                  value={aiCatId}
+                  onChange={(e) => setAiCatId(e.target.value)}
+                  className="w-full border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2.5 text-sm font-bold outline-none bg-white"
+                >
+                  <option value="">اختر فئة...</option>
+                  {categories.map(c => <option key={c.id} value={c.id}>{c.icon || ""} {c.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-sm font-bold text-primary/70 mb-2 block">الصعوبة</label>
+                <select
+                  data-testid="ai-difficulty-select"
+                  value={aiDiff}
+                  onChange={(e) => setAiDiff(parseInt(e.target.value))}
+                  className="w-full border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2.5 text-sm font-bold outline-none bg-white"
+                >
+                  <option value={300}>300 - سهل</option>
+                  <option value={600}>600 - متوسط</option>
+                  <option value={900}>900 - صعب</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-sm font-bold text-primary/70 mb-2 block">عدد الأسئلة</label>
+                <input
+                  data-testid="ai-count-input"
+                  type="number"
+                  min={3} max={20}
+                  value={aiCount}
+                  onChange={(e) => setAiCount(Math.min(20, Math.max(3, parseInt(e.target.value) || 10)))}
+                  className="w-full border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2.5 text-sm font-black outline-none text-center"
+                />
+              </div>
+            </div>
+            <button
+              data-testid="ai-generate-btn"
+              onClick={handleAiGenerate}
+              disabled={aiGenerating || !aiCatId}
+              className="w-full mt-5 bg-primary text-secondary py-3.5 rounded-xl font-black text-lg hover:scale-[1.01] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {aiGenerating ? (
+                <>
+                  <span className="animate-spin inline-block">⏳</span>
+                  <span>جاري التوليد...</span>
+                </>
+              ) : (
+                <>
+                  <span>✨</span>
+                  <span>ولّد {aiCount} سؤال</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* Generated Questions Preview */}
+          {aiQuestions.length > 0 && (
+            <div className="bg-white border border-primary/10 rounded-2xl p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-black text-lg">
+                  {aiQuestions.length} سؤال جاهز للمراجعة
+                </h3>
+                <button
+                  data-testid="ai-save-btn"
+                  onClick={handleAiSave}
+                  disabled={aiSaving}
+                  className="bg-green-600 text-white px-6 py-2 rounded-xl font-black hover:bg-green-700 transition-all disabled:opacity-50 flex items-center gap-2"
+                >
+                  {aiSaving ? "جاري الحفظ..." : `💾 حفظ الكل (${aiQuestions.length})`}
+                </button>
+              </div>
+              <div className="space-y-3 max-h-[500px] overflow-y-auto">
+                {aiQuestions.map((q, i) => (
+                  <div key={q.id} className={`p-4 rounded-xl border ${q.difficulty === 300 ? "border-green-200 bg-green-50" : q.difficulty === 600 ? "border-amber-200 bg-amber-50" : "border-red-200 bg-red-50"}`}>
+                    <div className="flex items-start gap-3">
+                      <span className="text-primary/30 font-black text-sm shrink-0 mt-1">{i + 1}</span>
+                      <div className="flex-1 space-y-2">
+                        <textarea
+                          value={q.text}
+                          onChange={(e) => {
+                            const updated = [...aiQuestions];
+                            updated[i] = { ...q, text: e.target.value };
+                            setAiQuestions(updated);
+                          }}
+                          rows={2}
+                          className="w-full bg-white border border-primary/10 rounded-lg px-3 py-2 text-sm font-bold outline-none resize-none"
+                          placeholder="نص السؤال"
+                        />
+                        <input
+                          value={q.answer}
+                          onChange={(e) => {
+                            const updated = [...aiQuestions];
+                            updated[i] = { ...q, answer: e.target.value };
+                            setAiQuestions(updated);
+                          }}
+                          className="w-full bg-white border border-primary/10 rounded-lg px-3 py-2 text-sm outline-none"
+                          placeholder="الإجابة"
+                        />
+                      </div>
+                      <button
+                        onClick={() => setAiQuestions(aiQuestions.filter((_, idx) => idx !== i))}
+                        className="text-red-400/50 hover:text-red-500 text-lg shrink-0"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {aiQuestions.length === 0 && !aiGenerating && (
+            <div className="text-center py-12 text-primary/30">
+              <div className="text-5xl mb-3">✨</div>
+              <div className="font-bold">اختر الفئة والصعوبة واضغط توليد</div>
+              <div className="text-sm mt-1">الذكاء الاصطناعي سيكتب لك أسئلة حماسية بالعربي</div>
+            </div>
+          )}
         </div>
       )}
 

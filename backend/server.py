@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
-import os, logging, uuid, random, shutil
+import os, logging, uuid, random, shutil, re, json
 from pathlib import Path
 from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional, Dict
@@ -13,6 +13,7 @@ from passlib.context import CryptContext
 from emergentintegrations.payments.stripe.checkout import (
     StripeCheckout, CheckoutSessionRequest, CheckoutSessionResponse, CheckoutStatusResponse
 )
+from emergentintegrations.llm.chat import LlmChat, UserMessage
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -351,8 +352,10 @@ async def get_categories():
 
 @api_router.get("/free-categories")
 async def get_free_categories():
-    cats = await db.categories.find({"id": {"$in": FREE_CATEGORIES}}, {"_id": 0}).to_list(10)
-    return {"category_ids": FREE_CATEGORIES, "categories": cats}
+    s = await db.settings.find_one({"key": "game_settings"}, {"_id": 0})
+    free_ids = s.get("free_categories", FREE_CATEGORIES) if s else FREE_CATEGORIES
+    cats = await db.categories.find({"id": {"$in": free_ids}}, {"_id": 0}).to_list(20)
+    return {"category_ids": free_ids, "categories": cats}
 
 @api_router.post("/categories")
 async def create_category(body: CategoryCreate, _: bool = Depends(get_admin)):
@@ -1149,7 +1152,8 @@ async def seed_data(force: bool = False, _: bool = Depends(get_admin)):
 DEFAULT_SETTINGS = {
     "key": "game_settings",
     "default_timer": 65,
-    "word_timers": {"300": 80, "600": 60, "900": 45}
+    "word_timers": {"300": 80, "600": 60, "900": 45},
+    "free_categories": ["cat_word", "cat_islamic", "cat_music", "cat_flags", "cat_easy", "cat_science"]
 }
 
 @api_router.get("/settings")
@@ -1157,9 +1161,11 @@ async def get_settings():
     s = await db.settings.find_one({"key": "game_settings"}, {"_id": 0})
     if not s:
         await db.settings.insert_one({**DEFAULT_SETTINGS})
-        return DEFAULT_SETTINGS
+        return {**DEFAULT_SETTINGS}
     s.pop("_id", None)
-    return s
+    # Merge with defaults to ensure new fields are always present
+    merged = {**DEFAULT_SETTINGS, **s}
+    return merged
 
 @api_router.put("/settings")
 async def update_settings(body: dict, admin=Depends(get_admin)):
@@ -1170,6 +1176,10 @@ async def update_settings(body: dict, admin=Depends(get_admin)):
         {"$set": {**body, "key": "game_settings"}},
         upsert=True
     )
+    updated = await db.settings.find_one({"key": "game_settings"}, {"_id": 0})
+    if updated:
+        updated.pop("_id", None)
+        return {**DEFAULT_SETTINGS, **updated}
     return {"message": "تم حفظ الإعدادات"}
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1198,6 +1208,87 @@ async def upload_image(request: Request, file: UploadFile = File(...), admin=Dep
 
 # ROOT
 # ══════════════════════════════════════════════════════════════════════════════
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AI QUESTION GENERATOR
+# ══════════════════════════════════════════════════════════════════════════════
+
+@api_router.post("/ai/generate-questions")
+async def ai_generate_questions(body: dict, admin=Depends(get_admin)):
+    category_id = body.get("category_id", "")
+    difficulty   = int(body.get("difficulty", 300))
+    count        = min(int(body.get("count", 10)), 20)
+
+    lm_key = os.environ.get("EMERGENT_LLM_KEY", "")
+    if not lm_key:
+        raise HTTPException(500, "مفتاح الذكاء الاصطناعي غير مضبوط")
+
+    cat = await db.categories.find_one({"id": category_id}, {"_id": 0})
+    cat_name   = cat.get("name", "عامة") if cat else "عامة"
+    diff_label = "سهل ومباشر" if difficulty == 300 else ("متوسط الصعوبة" if difficulty == 600 else "صعب ومتحدٍّ")
+
+    chat = LlmChat(
+        api_key=lm_key,
+        session_id=f"qgen_{uuid.uuid4()}",
+        system_message=(
+            "أنت خبير في إنشاء أسئلة مسابقات ترفيهية باللغة العربية السعودية. "
+            "تُنشئ أسئلة جذابة، حماسية، متنوعة، وسهلة الفهم للجميع. "
+            "الإجابات يجب أن تكون قصيرة جداً (كلمة أو كلمتين). "
+            "أرجع JSON صالح فقط بدون أي نص إضافي أو markdown."
+        )
+    ).with_model("gemini", "gemini-3-flash-preview")
+
+    prompt = (
+        f'أنشئ بالضبط {count} سؤال ترفيهي لفئة "{cat_name}" بمستوى ({diff_label}).\n\n'
+        "شروط:\n"
+        "- باللغة العربية فقط\n"
+        "- متنوعة وغير متكررة\n"
+        "- الإجابة كلمة واحدة أو كلمتين فقط\n"
+        "- أسئلة واضحة وممتعة\n\n"
+        "أرجع JSON array فقط بهذا الشكل:\n"
+        '[{"text":"نص السؤال؟","answer":"الإجابة"}]'
+    )
+
+    try:
+        response = await chat.send_message(UserMessage(text=prompt))
+        m = re.search(r'\[.*?\]', response, re.DOTALL)
+        if not m:
+            raise HTTPException(500, "لم يُنتج الذكاء الاصطناعي نتيجة صالحة")
+        raw = json.loads(m.group())
+        questions = []
+        for q in raw[:count]:
+            txt = (q.get("text") or "").strip()
+            ans = (q.get("answer") or "").strip()
+            if txt and ans:
+                questions.append({
+                    "id":               str(uuid.uuid4()),
+                    "category_id":      category_id,
+                    "difficulty":       difficulty,
+                    "text":             txt,
+                    "answer":           ans,
+                    "image_url":        "",
+                    "answer_image_url": "",
+                    "question_type":    "text",
+                    "created_at":       datetime.now(timezone.utc).isoformat(),
+                })
+        return {"questions": questions, "count": len(questions)}
+    except json.JSONDecodeError:
+        raise HTTPException(500, "فشل في قراءة الأسئلة المولّدة")
+
+
+@api_router.post("/ai/save-questions")
+async def ai_save_questions(body: dict, admin=Depends(get_admin)):
+    questions = body.get("questions", [])
+    if not questions:
+        raise HTTPException(400, "لا توجد أسئلة للحفظ")
+    to_insert = []
+    for q in questions:
+        q.pop("_id", None)
+        if not q.get("id"):
+            q["id"] = str(uuid.uuid4())
+        to_insert.append(q)
+    await db.questions.insert_many(to_insert)
+    return {"message": f"تم حفظ {len(to_insert)} سؤال", "count": len(to_insert)}
 
 @api_router.get("/")
 async def root():
