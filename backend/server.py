@@ -1189,7 +1189,10 @@ async def upload_image(request: Request, file: UploadFile = File(...), admin=Dep
     dest = UPLOAD_DIR / filename
     content = await file.read()
     dest.write_bytes(content)
-    base = str(request.base_url).rstrip("/")
+    # Use forwarded host/proto headers if behind reverse proxy
+    fwd_proto = request.headers.get("x-forwarded-proto") or str(request.base_url).split("://")[0]
+    fwd_host  = request.headers.get("x-forwarded-host") or request.headers.get("host") or str(request.base_url).split("://")[1].rstrip("/")
+    base = f"{fwd_proto}://{fwd_host.rstrip('/')}"
     url = f"{base}/api/static/uploads/{filename}"
     return {"url": url, "filename": filename}
 

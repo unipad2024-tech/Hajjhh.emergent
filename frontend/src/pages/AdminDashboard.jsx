@@ -38,6 +38,7 @@ export default function AdminDashboard() {
   // New category form
   const [catForm, setCatForm] = useState({ name: "", icon: "", description: "", is_special: false, color: "#5B0E14", image_url: "" });
   const [showCatForm, setShowCatForm] = useState(false);
+  const [editingCat, setEditingCat] = useState(null);
 
   useEffect(() => {
     if (!token) { navigate("/admin"); return; }
@@ -171,12 +172,24 @@ export default function AdminDashboard() {
   const handleSaveCat = async () => {
     if (!catForm.name.trim()) { toast.error("أدخل اسم الفئة"); return; }
     try {
-      await axios.post(`${API}/categories`, catForm, { headers });
-      toast.success("تمت إضافة الفئة");
+      if (editingCat) {
+        await axios.put(`${API}/categories/${editingCat.id}`, catForm, { headers });
+        toast.success("تم تحديث الفئة");
+      } else {
+        await axios.post(`${API}/categories`, catForm, { headers });
+        toast.success("تمت إضافة الفئة");
+      }
       setShowCatForm(false);
+      setEditingCat(null);
       setCatForm({ name: "", icon: "", description: "", is_special: false, color: "#5B0E14", image_url: "" });
       loadData();
     } catch { toast.error("خطأ"); }
+  };
+
+  const handleEditCat = (cat) => {
+    setEditingCat(cat);
+    setCatForm({ name: cat.name, icon: cat.icon || "", description: cat.description || "", is_special: cat.is_special || false, color: cat.color || "#5B0E14", image_url: cat.image_url || "" });
+    setShowCatForm(true);
   };
 
   const handleDeleteCat = async (id) => {
@@ -277,6 +290,13 @@ export default function AdminDashboard() {
                     <span>{cat.icon || CATEGORY_ICONS[cat.id] || "🎯"}</span>
                     <span className="text-sm font-bold truncate">{cat.name}</span>
                   </div>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleEditCat(cat); }}
+                    className="text-primary/40 hover:text-primary/70 text-xs px-1"
+                    title="تعديل"
+                  >
+                    ✎
+                  </button>
                   <button
                     onClick={(e) => { e.stopPropagation(); handleDeleteCat(cat.id); }}
                     className="text-red-400/50 hover:text-red-400 text-xs"
@@ -519,6 +539,78 @@ export default function AdminDashboard() {
         </div>
       )}
 
+      {/* ── SETTINGS TAB ── */}
+      {activeTab === "settings" && (
+        <div className="p-6 max-w-2xl mx-auto">
+          <h2 className="text-2xl font-black mb-6">إعدادات اللعبة</h2>
+
+          {/* Default Timer */}
+          <div className="bg-white border border-primary/10 rounded-2xl p-6 mb-4">
+            <h3 className="font-black text-lg mb-1">التايمر الافتراضي</h3>
+            <p className="text-primary/50 text-sm mb-4">مدة الإجابة الافتراضية لكل الأسئلة (بالثواني)</p>
+            <div className="flex items-center gap-4">
+              <input
+                data-testid="default-timer-input"
+                type="number"
+                min={10} max={180}
+                value={gameSettings.default_timer}
+                onChange={(e) => setGameSettings({ ...gameSettings, default_timer: parseInt(e.target.value) || 65 })}
+                className="w-28 border-2 border-primary/20 focus:border-primary rounded-xl px-4 py-2 text-xl font-black outline-none text-center"
+              />
+              <span className="text-primary/50 font-bold">ثانية</span>
+              <div className="flex-1 h-2 bg-primary/10 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-primary/50 rounded-full transition-all"
+                  style={{ width: `${Math.min(100, (gameSettings.default_timer / 120) * 100)}%` }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* ولا كلمة timers */}
+          <div className="bg-white border border-primary/10 rounded-2xl p-6 mb-6">
+            <h3 className="font-black text-lg mb-1">تايمرات "ولا كلمة"</h3>
+            <p className="text-primary/50 text-sm mb-4">مدة مخصصة لفئة ولا كلمة حسب الصعوبة</p>
+            <div className="space-y-4">
+              {[
+                { key: "300", label: "سهل (300 نقطة)", color: "text-green-600", bg: "bg-green-50 border-green-200" },
+                { key: "600", label: "متوسط (600 نقطة)", color: "text-amber-600", bg: "bg-amber-50 border-amber-200" },
+                { key: "900", label: "صعب (900 نقطة)", color: "text-red-600", bg: "bg-red-50 border-red-200" },
+              ].map(({ key, label, color, bg }) => (
+                <div key={key} className={`flex items-center gap-4 p-3 rounded-xl border ${bg}`}>
+                  <span className={`font-black text-sm w-36 ${color}`}>{label}</span>
+                  <input
+                    data-testid={`word-timer-${key}`}
+                    type="number"
+                    min={10} max={180}
+                    value={gameSettings.word_timers?.[key] ?? (key === "300" ? 80 : key === "600" ? 60 : 45)}
+                    onChange={(e) => setGameSettings({
+                      ...gameSettings,
+                      word_timers: { ...gameSettings.word_timers, [key]: parseInt(e.target.value) || 60 }
+                    })}
+                    className="w-20 border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-1.5 text-lg font-black outline-none text-center bg-white"
+                  />
+                  <span className="text-primary/50 text-sm">ثانية</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <button
+            data-testid="save-settings-btn"
+            onClick={saveSettings}
+            className="w-full bg-primary text-secondary py-3 rounded-xl font-black text-lg hover:scale-[1.02] transition-all"
+          >
+            {settingsSaved ? "✓ تم الحفظ!" : "حفظ الإعدادات"}
+          </button>
+
+          {/* Reset hint */}
+          <p className="text-center text-primary/30 text-xs mt-3">
+            ملاحظة: التايمر الافتراضي 65 ثانية · ولا كلمة: سهل 80s، متوسط 60s، صعب 45s
+          </p>
+        </div>
+      )}
+
       {/* Question Form Modal */}
       {showForm && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
@@ -596,29 +688,58 @@ export default function AdminDashboard() {
                 />
               </div>
 
+              {/* Question Image Upload */}
               <div>
-                <label className="text-sm font-bold text-primary/70 mb-1 block">رابط صورة السؤال (اختياري)</label>
-                <input
-                  data-testid="question-image-input"
-                  value={form.image_url}
-                  onChange={(e) => setForm({ ...form, image_url: e.target.value })}
-                  placeholder="https://..."
-                  className="w-full border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none"
-                />
+                <label className="text-sm font-bold text-primary/70 mb-1 block">صورة السؤال (اختياري)</label>
+                <div className="flex gap-2 items-center">
+                  <label className="cursor-pointer flex items-center gap-2 bg-primary/10 hover:bg-primary/20 text-primary px-3 py-2 rounded-xl text-sm font-bold transition-all border border-primary/20">
+                    <span>📷 رفع صورة</span>
+                    <input
+                      data-testid="question-image-upload"
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      className="hidden"
+                      onChange={(e) => uploadImage(e.target.files[0], (url) => setForm({ ...form, image_url: url }))}
+                    />
+                  </label>
+                  <input
+                    data-testid="question-image-input"
+                    value={form.image_url}
+                    onChange={(e) => setForm({ ...form, image_url: e.target.value })}
+                    placeholder="أو الصق الرابط هنا"
+                    className="flex-1 border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none"
+                  />
+                </div>
                 {form.image_url && (
                   <img src={form.image_url} alt="" className="mt-2 h-16 object-contain rounded-lg" onError={(e) => e.target.style.display = "none"} />
                 )}
               </div>
 
+              {/* Answer Image Upload */}
               <div>
-                <label className="text-sm font-bold text-primary/70 mb-1 block">رابط صورة الإجابة (اختياري)</label>
-                <input
-                  data-testid="question-answer-image-input"
-                  value={form.answer_image_url}
-                  onChange={(e) => setForm({ ...form, answer_image_url: e.target.value })}
-                  placeholder="https://..."
-                  className="w-full border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none"
-                />
+                <label className="text-sm font-bold text-primary/70 mb-1 block">صورة الإجابة (اختياري)</label>
+                <div className="flex gap-2 items-center">
+                  <label className="cursor-pointer flex items-center gap-2 bg-primary/10 hover:bg-primary/20 text-primary px-3 py-2 rounded-xl text-sm font-bold transition-all border border-primary/20">
+                    <span>📷 رفع صورة</span>
+                    <input
+                      data-testid="question-answer-image-upload"
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      className="hidden"
+                      onChange={(e) => uploadImage(e.target.files[0], (url) => setForm({ ...form, answer_image_url: url }))}
+                    />
+                  </label>
+                  <input
+                    data-testid="question-answer-image-input"
+                    value={form.answer_image_url}
+                    onChange={(e) => setForm({ ...form, answer_image_url: e.target.value })}
+                    placeholder="أو الصق الرابط هنا"
+                    className="flex-1 border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none"
+                  />
+                </div>
+                {form.answer_image_url && (
+                  <img src={form.answer_image_url} alt="" className="mt-2 h-16 object-contain rounded-lg" onError={(e) => e.target.style.display = "none"} />
+                )}
               </div>
             </div>
 
@@ -647,7 +768,7 @@ export default function AdminDashboard() {
       {showCatForm && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-sm">
-            <h3 className="text-xl font-black text-primary mb-4">فئة جديدة</h3>
+            <h3 className="text-xl font-black text-primary mb-4">{editingCat ? "تعديل الفئة" : "فئة جديدة"}</h3>
             <div className="space-y-3">
               <input
                 value={catForm.name}
@@ -668,13 +789,25 @@ export default function AdminDashboard() {
                 className="w-full border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none"
               />
               <div>
-                <label className="text-sm font-bold text-primary/70 mb-1 block">رابط صورة الفئة</label>
-                <input
-                  value={catForm.image_url}
-                  onChange={(e) => setCatForm({ ...catForm, image_url: e.target.value })}
-                  placeholder="https://... (رابط الصورة)"
-                  className="w-full border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none"
-                />
+                <label className="text-sm font-bold text-primary/70 mb-1 block">صورة الفئة</label>
+                <div className="flex gap-2 items-center mb-2">
+                  <label className="cursor-pointer flex items-center gap-2 bg-primary/10 hover:bg-primary/20 text-primary px-3 py-2 rounded-xl text-sm font-bold transition-all border border-primary/20">
+                    <span>📷 رفع صورة</span>
+                    <input
+                      data-testid="cat-image-upload"
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      className="hidden"
+                      onChange={(e) => uploadImage(e.target.files[0], (url) => setCatForm({ ...catForm, image_url: url }))}
+                    />
+                  </label>
+                  <input
+                    value={catForm.image_url}
+                    onChange={(e) => setCatForm({ ...catForm, image_url: e.target.value })}
+                    placeholder="أو الصق الرابط"
+                    className="flex-1 border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none"
+                  />
+                </div>
                 {catForm.image_url && (
                   <img src={catForm.image_url} alt="" className="mt-2 h-20 w-full object-cover rounded-xl" onError={(e) => e.target.style.display = "none"} />
                 )}
@@ -690,8 +823,8 @@ export default function AdminDashboard() {
               </label>
             </div>
             <div className="flex gap-3 mt-4">
-              <button onClick={handleSaveCat} className="flex-1 bg-primary text-secondary py-2 rounded-xl font-bold">حفظ</button>
-              <button onClick={() => setShowCatForm(false)} className="flex-1 bg-primary/10 text-primary py-2 rounded-xl font-bold">إلغاء</button>
+              <button onClick={handleSaveCat} className="flex-1 bg-primary text-secondary py-2 rounded-xl font-bold">{editingCat ? "تحديث" : "حفظ"}</button>
+              <button onClick={() => { setShowCatForm(false); setEditingCat(null); }} className="flex-1 bg-primary/10 text-primary py-2 rounded-xl font-bold">إلغاء</button>
             </div>
           </div>
         </div>
