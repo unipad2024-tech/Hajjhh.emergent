@@ -126,7 +126,11 @@ HUJJAH is a competitive team trivia social game for Saudi gatherings, now transf
   - Questions list with toggle/edit/delete + is_experimental flag
   - trial_questions_only option (show only marked questions to free users)
 - [x] is_trial flag auto-set in game session (true for non-premium users)
-- [x] Turn system: currentTurn indicator in GameBoardPage (دور فريق X)
+- [x] GameBoard Score Bar redesigned: team names large (clamp 0.85-1.5rem), scores huge (clamp 2-3.8rem)
+- [x] Active team block glows (red/blue shadow) to show whose turn it is
+- [x] Turn indicator enlarged with colored border + glow effect
+- [x] Dark mode toggle properly sized (text-sm with padding)
+- [x] QuestionPage top bar: team names and scores larger, clearly visible
 - [x] Team answer buttons enlarged (2x size) in QuestionPage
 - [x] Homepage cleaned: removed categories grid, replaced Arabic numerals ١٢٣ with 1,2,3
 - [x] Trial Mode Control in Settings tab: admin selects free categories via checkboxes

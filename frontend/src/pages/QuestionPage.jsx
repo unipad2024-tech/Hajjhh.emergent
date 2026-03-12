@@ -148,13 +148,13 @@ export default function QuestionPage() {
           <div className="text-center">
             <div
               className="text-red-300/80 font-black leading-none"
-              style={{ fontSize: "clamp(0.65rem, 1.2vw, 0.85rem)" }}
+              style={{ fontSize: "clamp(0.75rem, 1.5vw, 1.1rem)" }}
             >
               🔴 {session?.team1_name}
             </div>
             <div
               className="text-secondary font-black leading-none"
-              style={{ fontSize: "clamp(1.1rem, 2.2vw, 1.6rem)" }}
+              style={{ fontSize: "clamp(1.3rem, 2.5vw, 2rem)" }}
             >
               {session?.team1_score || 0}
             </div>
@@ -163,13 +163,13 @@ export default function QuestionPage() {
           <div className="text-center">
             <div
               className="text-blue-300/80 font-black leading-none"
-              style={{ fontSize: "clamp(0.65rem, 1.2vw, 0.85rem)" }}
+              style={{ fontSize: "clamp(0.75rem, 1.5vw, 1.1rem)" }}
             >
               {session?.team2_name} 🔵
             </div>
             <div
               className="text-secondary font-black leading-none"
-              style={{ fontSize: "clamp(1.1rem, 2.2vw, 1.6rem)" }}
+              style={{ fontSize: "clamp(1.3rem, 2.5vw, 2rem)" }}
             >
               {session?.team2_score || 0}
             </div>
