@@ -95,6 +95,12 @@ HUJJAH is a competitive team trivia social game for Saudi gatherings, now transf
 - Password: hujjah2024 (ADMIN_PASSWORD env var)
 - Login: /admin -> password -> /admin/dashboard
 
+## Documentation
+- `/app/DOCUMENTATION.md` — التوثيق التقني الشامل (2355 سطر، 16 قسم كامل)
+  - المعمارية المستهدفة: Vercel + Railway + Supabase (PostgreSQL)
+  - يشمل: Schema كامل، API، Auth، Stripe، Gemini، دليل إعادة البناء
+  - آخر تحديث: فبراير 2026
+
 ## P0/P1/P2 Backlog
 
 ### P0 (Critical - done ✓)
