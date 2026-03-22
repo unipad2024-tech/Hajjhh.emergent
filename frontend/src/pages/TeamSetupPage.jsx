@@ -42,7 +42,21 @@ export default function TeamSetupPage() {
 
         <div className="bg-primary/70 border border-secondary/30 rounded-3xl p-8 backdrop-blur-sm">
           <h1 className="text-4xl font-black text-secondary text-center mb-2">سمّوا فرقكم</h1>
-          <p className="text-secondary/60 text-center mb-8">اختاروا اسم حماسي لكل فريق!</p>
+          <p className="text-secondary/60 text-center mb-4">اختاروا اسم حماسي لكل فريق!</p>
+
+          {/* Recommendation message */}
+          <div
+            data-testid="team-size-recommendation"
+            className="flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 mb-5 text-center"
+            style={{
+              background: "rgba(241,225,148,0.08)",
+              border: "1px solid rgba(241,225,148,0.22)",
+            }}
+          >
+            <span style={{ color: "rgba(241,225,148,0.55)", fontSize: "0.88rem" }}>
+              💡 يُنصح بلاعبين أو أكثر لكل فريق للاستمتاع الكامل
+            </span>
+          </div>
 
           <div className="space-y-6">
             {/* Team 1 */}

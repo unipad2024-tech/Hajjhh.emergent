@@ -179,7 +179,7 @@ function CategoryCard({ cat, session, isTileUsed, clickingTile, onTileClick, dar
             className="font-black text-center leading-tight"
             style={{
               color: P.textMain,
-              fontSize: "clamp(0.7rem, 1.6vw, 1.1rem)",
+              fontSize: "clamp(0.85rem, 1.8vw, 1.3rem)",
               fontFamily: "Cairo, sans-serif",
               maxWidth: "200px",
             }}
@@ -189,8 +189,13 @@ function CategoryCard({ cat, session, isTileUsed, clickingTile, onTileClick, dar
 
           {/* Team badge */}
           <div
-            className="mt-0.5 text-[9px] font-bold px-2 py-0.5 rounded-full"
-            style={{ background: `${teamColor}18`, color: teamColor, border: `1px solid ${teamColor}33` }}
+            className="mt-0.5 font-bold px-2 py-0.5 rounded-full"
+            style={{
+              background: `${teamColor}18`,
+              color: teamColor,
+              border: `1px solid ${teamColor}33`,
+              fontSize: "clamp(0.65rem, 1.2vw, 0.9rem)",
+            }}
           >
             {teamName}
           </div>
@@ -315,19 +320,19 @@ export default function GameBoardPage() {
               background:  currentTurn === 1 ? "rgba(239,68,68,0.22)" : "rgba(239,68,68,0.07)",
               border:      `2.5px solid ${currentTurn === 1 ? "rgba(239,68,68,0.85)" : "rgba(239,68,68,0.22)"}`,
               boxShadow:   currentTurn === 1 ? "0 0 22px rgba(239,68,68,0.45), 0 0 50px rgba(239,68,68,0.15)" : "none",
-              minWidth:    "clamp(110px,16vw,240px)",
-              maxWidth:    "280px",
+              minWidth:    "clamp(120px,18vw,260px)",
+              maxWidth:    "300px",
             }}
           >
             <span
-              className="font-black text-red-300 leading-tight text-center truncate w-full text-center mb-0.5"
-              style={{ fontSize: "clamp(0.85rem, 2.2vw, 1.5rem)", maxWidth: "220px" }}
+              className="font-black text-red-300 leading-tight text-center truncate w-full mb-0.5"
+              style={{ fontSize: "clamp(1.1rem, 2.8vw, 2.2rem)", maxWidth: "260px" }}
             >
               🔴 {session?.team1_name}
             </span>
             <span
               className="font-black tabular-nums leading-none"
-              style={{ fontSize: "clamp(2rem, 4.5vw, 3.8rem)", color: "#F1E194" }}
+              style={{ fontSize: "clamp(2.2rem, 5vw, 4.2rem)", color: "#F1E194" }}
             >
               <ScoreCounter value={teamScores.team1} dark={darkMode} />
             </span>
@@ -406,19 +411,19 @@ export default function GameBoardPage() {
               background:  currentTurn === 2 ? "rgba(59,130,246,0.22)" : "rgba(59,130,246,0.07)",
               border:      `2.5px solid ${currentTurn === 2 ? "rgba(59,130,246,0.85)" : "rgba(59,130,246,0.22)"}`,
               boxShadow:   currentTurn === 2 ? "0 0 22px rgba(59,130,246,0.45), 0 0 50px rgba(59,130,246,0.15)" : "none",
-              minWidth:    "clamp(110px,16vw,240px)",
-              maxWidth:    "280px",
+              minWidth:    "clamp(120px,18vw,260px)",
+              maxWidth:    "300px",
             }}
           >
             <span
               className="font-black text-blue-300 leading-tight text-center truncate w-full text-center mb-0.5"
-              style={{ fontSize: "clamp(0.85rem, 2.2vw, 1.5rem)", maxWidth: "220px" }}
+              style={{ fontSize: "clamp(1.1rem, 2.8vw, 2.2rem)", maxWidth: "260px" }}
             >
               {session?.team2_name} 🔵
             </span>
             <span
               className="font-black tabular-nums leading-none"
-              style={{ fontSize: "clamp(2rem, 4.5vw, 3.8rem)", color: "#F1E194" }}
+              style={{ fontSize: "clamp(2.2rem, 5vw, 4.2rem)", color: "#F1E194" }}
             >
               <ScoreCounter value={teamScores.team2} dark={darkMode} />
             </span>
@@ -427,13 +432,13 @@ export default function GameBoardPage() {
         </div>
       </div>
 
-      {/* ── Game Board: 2×3 grid ── */}
+      {/* ── Game Board: responsive grid — 3 cols × 2 rows on small, 6 cols × 1 row on wide ── */}
       <div
         className="flex-1 p-2 md:p-3"
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(3, 1fr)",
-          gridTemplateRows: "repeat(2, 1fr)",
+          gridAutoRows: "1fr",
           gap: "clamp(6px, 1.2vw, 16px)",
           overflow: "hidden",
         }}

@@ -147,14 +147,14 @@ export default function QuestionPage() {
         <div className="flex gap-3 shrink-0 items-center">
           <div className="text-center">
             <div
-              className="text-red-300/80 font-black leading-none"
-              style={{ fontSize: "clamp(0.75rem, 1.5vw, 1.1rem)" }}
+              className="text-red-300/90 font-black leading-none"
+              style={{ fontSize: "clamp(0.9rem, 2vw, 1.5rem)" }}
             >
               🔴 {session?.team1_name}
             </div>
             <div
               className="text-secondary font-black leading-none"
-              style={{ fontSize: "clamp(1.3rem, 2.5vw, 2rem)" }}
+              style={{ fontSize: "clamp(1.6rem, 3vw, 2.5rem)" }}
             >
               {session?.team1_score || 0}
             </div>
@@ -162,14 +162,14 @@ export default function QuestionPage() {
           <div className="text-secondary/25 font-bold text-base">VS</div>
           <div className="text-center">
             <div
-              className="text-blue-300/80 font-black leading-none"
-              style={{ fontSize: "clamp(0.75rem, 1.5vw, 1.1rem)" }}
+              className="text-blue-300/90 font-black leading-none"
+              style={{ fontSize: "clamp(0.9rem, 2vw, 1.5rem)" }}
             >
               {session?.team2_name} 🔵
             </div>
             <div
               className="text-secondary font-black leading-none"
-              style={{ fontSize: "clamp(1.3rem, 2.5vw, 2rem)" }}
+              style={{ fontSize: "clamp(1.6rem, 3vw, 2.5rem)" }}
             >
               {session?.team2_score || 0}
             </div>
@@ -180,23 +180,25 @@ export default function QuestionPage() {
       {/* ── Main Area: Timer at top, Question fills height ── */}
       <div className="flex-1 flex flex-col items-center gap-2 px-3 md:px-6 pb-3 overflow-hidden">
 
-        {/* ── Timer (always at top center) ── */}
+        {/* ── Timer (always at top center) — large for TV ── */}
         <div className="shrink-0 flex flex-col items-center">
-          <svg width="110" height="110" viewBox="0 0 100 100">
-            <circle cx="50" cy="50" r={R} fill="rgba(0,0,0,0.4)" stroke="rgba(241,225,148,0.08)" strokeWidth="9"/>
-            <circle
-              cx="50" cy="50" r={R}
-              fill="none" stroke={col} strokeWidth="9" strokeLinecap="round"
-              strokeDasharray={circ} strokeDashoffset={dash}
-              style={{ transition: "stroke-dashoffset 1s linear, stroke 0.4s" }}
-            />
-            <text x="50" y="50" textAnchor="middle" dominantBaseline="central"
-              fill={col} fontSize="26" fontWeight="900" fontFamily="Cairo,sans-serif"
-              className={timeLeft <= 10 ? "animate-countdown" : ""}
-            >
-              {timeLeft}
-            </text>
-          </svg>
+          <div style={{ width: "clamp(130px, 16vh, 210px)", height: "clamp(130px, 16vh, 210px)" }}>
+            <svg width="100%" height="100%" viewBox="0 0 100 100">
+              <circle cx="50" cy="50" r={R} fill="rgba(0,0,0,0.4)" stroke="rgba(241,225,148,0.08)" strokeWidth="9"/>
+              <circle
+                cx="50" cy="50" r={R}
+                fill="none" stroke={col} strokeWidth="9" strokeLinecap="round"
+                strokeDasharray={circ} strokeDashoffset={dash}
+                style={{ transition: "stroke-dashoffset 1s linear, stroke 0.4s" }}
+              />
+              <text x="50" y="50" textAnchor="middle" dominantBaseline="central"
+                fill={col} fontSize="28" fontWeight="900" fontFamily="Cairo,sans-serif"
+                className={timeLeft <= 10 ? "animate-countdown" : ""}
+              >
+                {timeLeft}
+              </text>
+            </svg>
+          </div>
         </div>
 
         {/* ── Question Card (fills remaining height, full width) ── */}
@@ -274,19 +276,19 @@ export default function QuestionPage() {
                         data-testid="assign-team1-btn"
                         onClick={() => handleAssign(1)}
                         className="flex flex-col items-center justify-center bg-gradient-to-br from-red-700 to-red-950 border-2 border-red-400/50 text-white px-8 py-5 rounded-2xl font-bold hover:scale-105 hover:shadow-[0_0_35px_rgba(239,68,68,0.6)] transition-all"
-                        style={{ minWidth: "clamp(140px,20vw,220px)" }}
+                        style={{ minWidth: "clamp(160px,22vw,260px)" }}
                       >
-                        <span className="text-base md:text-lg mb-1">🔴 {session?.team1_name}</span>
-                        <span className="text-3xl md:text-4xl font-black text-red-200">+{question.difficulty}</span>
+                        <span className="font-black" style={{ fontSize: "clamp(1.1rem, 2vw, 1.7rem)", marginBottom: "4px" }}>🔴 {session?.team1_name}</span>
+                        <span className="font-black text-red-200" style={{ fontSize: "clamp(2.4rem, 4.8vw, 4.5rem)" }}>+{question.difficulty}</span>
                       </button>
                       <button
                         data-testid="assign-team2-btn"
                         onClick={() => handleAssign(2)}
                         className="flex flex-col items-center justify-center bg-gradient-to-br from-blue-700 to-blue-950 border-2 border-blue-400/50 text-white px-8 py-5 rounded-2xl font-bold hover:scale-105 hover:shadow-[0_0_35px_rgba(59,130,246,0.6)] transition-all"
-                        style={{ minWidth: "clamp(140px,20vw,220px)" }}
+                        style={{ minWidth: "clamp(160px,22vw,260px)" }}
                       >
-                        <span className="text-base md:text-lg mb-1">🔵 {session?.team2_name}</span>
-                        <span className="text-3xl md:text-4xl font-black text-blue-200">+{question.difficulty}</span>
+                        <span className="font-black" style={{ fontSize: "clamp(1.1rem, 2vw, 1.7rem)", marginBottom: "4px" }}>🔵 {session?.team2_name}</span>
+                        <span className="font-black text-blue-200" style={{ fontSize: "clamp(2.4rem, 4.8vw, 4.5rem)" }}>+{question.difficulty}</span>
                       </button>
                       <button
                         data-testid="skip-points-btn"
