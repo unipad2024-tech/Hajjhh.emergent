@@ -7,7 +7,7 @@ import { toast } from "sonner";
 export default function QuestionPage() {
   const navigate = useNavigate();
   const { state } = useLocation();
-  const { session, updateScore, gameSettings, switchTurn } = useGame();
+  const { session, updateScore, gameSettings, switchTurn, teamScores } = useGame();
   const { question, catName, slot, turnTeam } = state || {};
 
   // ─── Determine timer duration from settings ───────────────────────────────
@@ -156,7 +156,7 @@ export default function QuestionPage() {
               className="text-secondary font-black leading-none"
               style={{ fontSize: "clamp(1.6rem, 3vw, 2.5rem)" }}
             >
-              {session?.team1_score || 0}
+              {teamScores.team1}
             </div>
           </div>
           <div className="text-secondary/25 font-bold text-base">VS</div>
@@ -171,7 +171,7 @@ export default function QuestionPage() {
               className="text-secondary font-black leading-none"
               style={{ fontSize: "clamp(1.6rem, 3vw, 2.5rem)" }}
             >
-              {session?.team2_score || 0}
+              {teamScores.team2}
             </div>
           </div>
         </div>
@@ -181,7 +181,7 @@ export default function QuestionPage() {
       <div className="flex-1 flex flex-col items-center gap-2 px-3 md:px-6 pb-3 overflow-hidden">
 
         {/* ── Timer (always at top center) — large for TV ── */}
-        <div className="shrink-0 flex flex-col items-center">
+        <div className="shrink-0 flex flex-col items-center gap-1">
           <div style={{ width: "clamp(130px, 16vh, 210px)", height: "clamp(130px, 16vh, 210px)" }}>
             <svg width="100%" height="100%" viewBox="0 0 100 100">
               <circle cx="50" cy="50" r={R} fill="rgba(0,0,0,0.4)" stroke="rgba(241,225,148,0.08)" strokeWidth="9"/>
@@ -198,6 +198,48 @@ export default function QuestionPage() {
                 {timeLeft}
               </text>
             </svg>
+          </div>
+          {/* Timer Controls */}
+          <div className="flex gap-2">
+            <button
+              data-testid="timer-pause-resume-btn"
+              onClick={() => setTimerOn(t => !t)}
+              className="px-3 py-1 rounded-xl font-black transition-all hover:scale-105 active:scale-95"
+              style={{
+                background: timerOn ? "rgba(251,191,36,0.2)" : "rgba(34,197,94,0.2)",
+                border: `1px solid ${timerOn ? "rgba(251,191,36,0.5)" : "rgba(34,197,94,0.5)"}`,
+                color: timerOn ? "#fbbf24" : "#4ade80",
+                fontSize: "clamp(0.65rem, 1.2vw, 0.85rem)",
+              }}
+            >
+              {timerOn ? "⏸ إيقاف" : "▶ تشغيل"}
+            </button>
+            <button
+              data-testid="timer-reset-btn"
+              onClick={() => { setTimeLeft(TIMER_DURATION); setTimerOn(false); setTensionDone(false); }}
+              className="px-3 py-1 rounded-xl font-black transition-all hover:scale-105 active:scale-95"
+              style={{
+                background: "rgba(156,163,175,0.15)",
+                border: "1px solid rgba(156,163,175,0.3)",
+                color: "rgba(209,213,219,0.8)",
+                fontSize: "clamp(0.65rem, 1.2vw, 0.85rem)",
+              }}
+            >
+              ↺ إعادة
+            </button>
+            <button
+              data-testid="timer-start-btn"
+              onClick={() => { setTimeLeft(TIMER_DURATION); setTimerOn(true); setTensionDone(false); }}
+              className="px-3 py-1 rounded-xl font-black transition-all hover:scale-105 active:scale-95"
+              style={{
+                background: "rgba(34,197,94,0.15)",
+                border: "1px solid rgba(34,197,94,0.3)",
+                color: "rgba(74,222,128,0.9)",
+                fontSize: "clamp(0.65rem, 1.2vw, 0.85rem)",
+              }}
+            >
+              ▶▶ ابدأ
+            </button>
           </div>
         </div>
 

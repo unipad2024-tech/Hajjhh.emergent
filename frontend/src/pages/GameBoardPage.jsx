@@ -219,6 +219,400 @@ function CategoryCard({ cat, session, isTileUsed, clickingTile, onTileClick, dar
   );
 }
 
+/* ════════════════════════ GAME MASTER PANEL ════════════════════════ */
+function GameMasterPanel({ session, teamScores, currentTurn, selectedQuestions,
+  categories, adjustScoreDelta, setExactScore, setTurn, switchTurn, restoreTile, dark }) {
+
+  const [open, setOpen]           = useState(false);
+  const [adjTeam, setAdjTeam]     = useState(1);
+  const [adjValue, setAdjValue]   = useState("");
+  const [adjBusy, setAdjBusy]     = useState(false);
+  const [editScore, setEditScore] = useState(null); // null | 1 | 2
+  const [editVal, setEditVal]     = useState("");
+  const [activeTab, setActiveTab] = useState("score"); // score | turn | restore
+
+  const BG     = dark ? "rgba(8,16,6,0.98)"      : "rgba(255,252,245,0.98)";
+  const TXT    = dark ? "#C7D3A4"                 : "#1a2208";
+  const SUB    = dark ? "rgba(199,211,164,0.55)"  : "rgba(26,34,8,0.45)";
+  const CARD   = dark ? "rgba(28,42,26,0.8)"      : "rgba(240,235,220,0.9)";
+  const BORDER = dark ? "rgba(120,170,90,0.2)"    : "rgba(0,0,0,0.1)";
+
+  const tileList = [...selectedQuestions].slice(-20).reverse();
+
+  const parseTile = (key) => {
+    const parts = key.split("_");
+    const slot  = parts.pop();
+    const diff  = parts.pop();
+    const catId = parts.join("_");
+    const cat   = categories.find(c => c.id === catId);
+    return { catId, diff, slot, catName: cat?.name || catId, icon: cat?.icon || "" };
+  };
+
+  const handleAdjust = async (val) => {
+    const n = parseInt(val ?? adjValue, 10);
+    if (isNaN(n)) { toast.error("أدخل رقماً مثل +300 أو -200"); return; }
+    setAdjBusy(true);
+    await adjustScoreDelta(adjTeam, n);
+    const tname = adjTeam === 1 ? session?.team1_name : session?.team2_name;
+    toast.success(`${n >= 0 ? "+" : ""}${n} ← ${tname}`, { duration: 2000 });
+    if (val === undefined) setAdjValue("");
+    setAdjBusy(false);
+  };
+
+  const handleSetScore = async () => {
+    const v = parseInt(editVal, 10);
+    if (isNaN(v)) { toast.error("رقم غير صالح"); return; }
+    await setExactScore(editScore, v);
+    toast.success("تم تحديث النقاط مباشرة", { duration: 1500 });
+    setEditScore(null); setEditVal("");
+  };
+
+  const QUICK_VALS = [300, 600, 900];
+  const tabStyle = (tab) => ({
+    flex: 1, padding: "7px 4px", borderRadius: "8px", fontWeight: 900,
+    fontSize: "0.78rem", cursor: "pointer", transition: "all 0.15s",
+    background: activeTab === tab ? "#5B0E14" : "transparent",
+    color: activeTab === tab ? "#F1E194" : SUB,
+    border: "none",
+  });
+
+  return (
+    <>
+      {/* ── Floating Toggle Button ── */}
+      <button
+        data-testid="gmp-toggle-btn"
+        onClick={() => setOpen(o => !o)}
+        title="لوحة تحكم المضيف"
+        className="fixed z-50 flex items-center justify-center rounded-2xl font-black shadow-2xl transition-all hover:scale-110 active:scale-95"
+        style={{
+          bottom: "clamp(14px,2.5vh,24px)",
+          right: "clamp(14px,2vw,24px)",
+          width: "clamp(46px,5vw,60px)",
+          height: "clamp(46px,5vw,60px)",
+          background: open ? "#5B0E14" : "rgba(91,14,20,0.88)",
+          border: "2px solid rgba(241,225,148,0.35)",
+          color: "#F1E194",
+          fontSize: "clamp(1.1rem,2vw,1.4rem)",
+          boxShadow: "0 4px 24px rgba(91,14,20,0.6)",
+        }}
+      >
+        {open ? "✕" : "⚙"}
+      </button>
+
+      {/* ── Backdrop ── */}
+      {open && (
+        <div
+          className="fixed inset-0 z-40"
+          style={{ background: "rgba(0,0,0,0.25)" }}
+          onClick={() => setOpen(false)}
+        />
+      )}
+
+      {/* ── Panel ── */}
+      <div
+        data-testid="gmp-panel"
+        className="fixed top-0 right-0 h-full z-50 flex flex-col overflow-hidden"
+        style={{
+          width: "clamp(300px,28vw,360px)",
+          background: BG,
+          borderLeft: `2px solid ${BORDER}`,
+          transform: open ? "translateX(0)" : "translateX(100%)",
+          transition: "transform 0.3s cubic-bezier(0.4,0,0.2,1)",
+          boxShadow: open ? "-8px 0 40px rgba(0,0,0,0.35)" : "none",
+        }}
+      >
+        {/* Header */}
+        <div className="px-4 py-3 shrink-0 flex items-center justify-between" style={{ borderBottom: `1px solid ${BORDER}` }}>
+          <div>
+            <div className="font-black" style={{ color: TXT, fontSize: "1rem" }}>⚙ لوحة المضيف</div>
+            <div style={{ color: SUB, fontSize: "0.7rem" }}>تحكم كامل في اللعبة</div>
+          </div>
+          <button
+            onClick={() => setOpen(false)}
+            className="rounded-lg px-2 py-1 font-black transition-all hover:scale-110"
+            style={{ color: SUB, fontSize: "1.1rem" }}
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Tab Bar */}
+        <div className="flex px-3 py-2 gap-1 shrink-0" style={{ borderBottom: `1px solid ${BORDER}` }}>
+          {[
+            { id: "score",   label: "نقاط" },
+            { id: "turn",    label: "الدور" },
+            { id: "restore", label: "استعادة" },
+          ].map(t => (
+            <button key={t.id} onClick={() => setActiveTab(t.id)} style={tabStyle(t.id)}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
+
+          {/* ═══ TAB: SCORE ADJUSTMENT ═══ */}
+          {activeTab === "score" && (
+            <>
+              {/* Live Score Edit */}
+              <div className="rounded-xl p-3" style={{ background: CARD, border: `1px solid ${BORDER}` }}>
+                <div className="font-black mb-2" style={{ color: TXT, fontSize: "0.8rem" }}>تعديل مباشر للنقاط</div>
+                <div className="flex gap-2">
+                  {[1, 2].map(t => {
+                    const score  = t === 1 ? teamScores.team1 : teamScores.team2;
+                    const tname  = t === 1 ? session?.team1_name : session?.team2_name;
+                    const tcolor = t === 1 ? "#ef4444" : "#3b82f6";
+                    return (
+                      <div key={t} className="flex-1 text-center">
+                        <div className="font-black truncate mb-1" style={{ color: tcolor, fontSize: "0.75rem" }}>{tname}</div>
+                        {editScore === t ? (
+                          <div className="flex gap-1">
+                            <input
+                              data-testid={`score-edit-input-t${t}`}
+                              type="number"
+                              autoFocus
+                              value={editVal}
+                              onChange={e => setEditVal(e.target.value)}
+                              onKeyDown={e => { if (e.key === "Enter") handleSetScore(); if (e.key === "Escape") setEditScore(null); }}
+                              className="w-full rounded-lg px-2 py-1 font-black text-center outline-none"
+                              style={{ background: "rgba(241,225,148,0.1)", border: `1px solid ${tcolor}`, color: TXT, fontSize: "1rem" }}
+                              placeholder={String(score)}
+                            />
+                            <button
+                              data-testid={`score-edit-confirm-t${t}`}
+                              onClick={handleSetScore}
+                              className="rounded-lg px-2 font-black text-white transition-all hover:scale-110"
+                              style={{ background: tcolor, fontSize: "0.8rem" }}
+                            >
+                              ✓
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            data-testid={`score-edit-btn-t${t}`}
+                            onClick={() => { setEditScore(t); setEditVal(String(score)); }}
+                            className="w-full rounded-xl py-2 font-black transition-all hover:scale-105"
+                            style={{
+                              background: `${tcolor}18`,
+                              border: `2px solid ${tcolor}55`,
+                              color: tcolor,
+                              fontSize: "1.4rem",
+                            }}
+                          >
+                            {score}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Delta Adjustment */}
+              <div className="rounded-xl p-3" style={{ background: CARD, border: `1px solid ${BORDER}` }}>
+                <div className="font-black mb-2" style={{ color: TXT, fontSize: "0.8rem" }}>إضافة / خصم نقاط</div>
+
+                {/* Team selector */}
+                <div className="flex gap-2 mb-3">
+                  {[1, 2].map(t => {
+                    const tcolor = t === 1 ? "#ef4444" : "#3b82f6";
+                    const tname  = t === 1 ? session?.team1_name : session?.team2_name;
+                    return (
+                      <button
+                        key={t}
+                        data-testid={`adj-team-${t}-btn`}
+                        onClick={() => setAdjTeam(t)}
+                        className="flex-1 py-2 rounded-xl font-black transition-all text-sm"
+                        style={{
+                          background: adjTeam === t ? `${tcolor}` : `${tcolor}15`,
+                          border: `2px solid ${tcolor}`,
+                          color: adjTeam === t ? "white" : tcolor,
+                        }}
+                      >
+                        {tname}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Quick buttons + / - */}
+                <div className="grid grid-cols-3 gap-1.5 mb-2">
+                  {QUICK_VALS.map(v => (
+                    <button
+                      key={`+${v}`}
+                      data-testid={`adj-plus-${v}-btn`}
+                      onClick={() => handleAdjust(`+${v}`)}
+                      disabled={adjBusy}
+                      className="py-2 rounded-xl font-black text-sm transition-all hover:scale-105 active:scale-95 disabled:opacity-50"
+                      style={{ background: "rgba(34,197,94,0.15)", border: "1px solid rgba(34,197,94,0.4)", color: "#4ade80" }}
+                    >
+                      +{v}
+                    </button>
+                  ))}
+                  {QUICK_VALS.map(v => (
+                    <button
+                      key={`-${v}`}
+                      data-testid={`adj-minus-${v}-btn`}
+                      onClick={() => handleAdjust(`-${v}`)}
+                      disabled={adjBusy}
+                      className="py-2 rounded-xl font-black text-sm transition-all hover:scale-105 active:scale-95 disabled:opacity-50"
+                      style={{ background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.35)", color: "#f87171" }}
+                    >
+                      -{v}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Custom input */}
+                <div className="flex gap-2">
+                  <input
+                    data-testid="adj-custom-input"
+                    type="text"
+                    value={adjValue}
+                    onChange={e => setAdjValue(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter") handleAdjust(); }}
+                    placeholder="مثال: +500 أو -150"
+                    className="flex-1 rounded-xl px-3 py-2 font-bold outline-none"
+                    style={{
+                      background: dark ? "rgba(120,170,90,0.08)" : "rgba(0,0,0,0.04)",
+                      border: `1px solid ${BORDER}`,
+                      color: TXT,
+                      fontSize: "0.85rem",
+                      textAlign: "center",
+                    }}
+                  />
+                  <button
+                    data-testid="adj-apply-btn"
+                    onClick={() => handleAdjust()}
+                    disabled={adjBusy}
+                    className="px-4 rounded-xl font-black transition-all hover:scale-105 active:scale-95 disabled:opacity-50"
+                    style={{ background: "#5B0E14", color: "#F1E194", fontSize: "0.85rem" }}
+                  >
+                    تطبيق
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ═══ TAB: TURN CONTROL ═══ */}
+          {activeTab === "turn" && (
+            <div className="rounded-xl p-3" style={{ background: CARD, border: `1px solid ${BORDER}` }}>
+              <div className="font-black mb-3" style={{ color: TXT, fontSize: "0.8rem" }}>التحكم في الدور</div>
+
+              {/* Current turn indicator */}
+              <div
+                className="rounded-xl px-3 py-2 text-center font-black mb-4"
+                style={{
+                  background: currentTurn === 1 ? "rgba(239,68,68,0.15)" : "rgba(59,130,246,0.15)",
+                  border: `1.5px solid ${currentTurn === 1 ? "#ef4444" : "#3b82f6"}`,
+                  color: currentTurn === 1 ? "#fca5a5" : "#93c5fd",
+                  fontSize: "0.9rem",
+                }}
+              >
+                الدور الحالي: {currentTurn === 1 ? `🔴 ${session?.team1_name}` : `🔵 ${session?.team2_name}`}
+              </div>
+
+              {/* Manual set turn buttons */}
+              <div className="space-y-2">
+                <button
+                  data-testid="set-turn-1-btn"
+                  onClick={() => { setTurn(1); toast.success(`الدور: ${session?.team1_name}`, { duration: 1500 }); }}
+                  className="w-full py-3 rounded-xl font-black text-base transition-all hover:scale-[1.02] active:scale-95"
+                  style={{
+                    background: currentTurn === 1 ? "#ef4444" : "rgba(239,68,68,0.15)",
+                    border: "2px solid #ef4444",
+                    color: currentTurn === 1 ? "white" : "#fca5a5",
+                  }}
+                >
+                  🔴 دور {session?.team1_name}
+                </button>
+                <button
+                  data-testid="set-turn-2-btn"
+                  onClick={() => { setTurn(2); toast.success(`الدور: ${session?.team2_name}`, { duration: 1500 }); }}
+                  className="w-full py-3 rounded-xl font-black text-base transition-all hover:scale-[1.02] active:scale-95"
+                  style={{
+                    background: currentTurn === 2 ? "#3b82f6" : "rgba(59,130,246,0.15)",
+                    border: "2px solid #3b82f6",
+                    color: currentTurn === 2 ? "white" : "#93c5fd",
+                  }}
+                >
+                  🔵 دور {session?.team2_name}
+                </button>
+                <button
+                  data-testid="next-turn-btn"
+                  onClick={() => { switchTurn(); toast.success("تبديل الدور", { duration: 1000 }); }}
+                  className="w-full py-3 rounded-xl font-black text-base transition-all hover:scale-[1.02] active:scale-95"
+                  style={{
+                    background: dark ? "rgba(120,170,90,0.15)" : "rgba(0,0,0,0.06)",
+                    border: `1.5px solid ${BORDER}`,
+                    color: TXT,
+                  }}
+                >
+                  ⇄ تبديل الدور
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ═══ TAB: RESTORE TILE ═══ */}
+          {activeTab === "restore" && (
+            <div>
+              <div className="font-black mb-2" style={{ color: TXT, fontSize: "0.8rem" }}>
+                استعادة سؤال (يعيد البطاقة للوحة)
+              </div>
+              {tileList.length === 0 ? (
+                <div className="text-center py-6" style={{ color: SUB, fontSize: "0.8rem" }}>
+                  لا توجد أسئلة مستخدمة حتى الآن
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {tileList.map((key, i) => {
+                    const { catName, diff, slot, icon } = parseTile(key);
+                    return (
+                      <div
+                        key={key}
+                        className="flex items-center justify-between rounded-xl px-3 py-2"
+                        style={{ background: CARD, border: `1px solid ${BORDER}` }}
+                      >
+                        <div>
+                          <div className="font-bold" style={{ color: TXT, fontSize: "0.8rem" }}>
+                            {icon} {catName}
+                          </div>
+                          <div style={{ color: SUB, fontSize: "0.7rem" }}>
+                            {diff} نقطة — فتحة {slot}
+                          </div>
+                        </div>
+                        <button
+                          data-testid={`restore-tile-${key}`}
+                          onClick={() => {
+                            restoreTile(key);
+                            toast.success(`تمت استعادة السؤال`, { duration: 1500 });
+                          }}
+                          className="px-3 py-1.5 rounded-lg font-black transition-all hover:scale-110 active:scale-95"
+                          style={{
+                            background: "rgba(34,197,94,0.15)",
+                            border: "1px solid rgba(34,197,94,0.4)",
+                            color: "#4ade80",
+                            fontSize: "0.75rem",
+                          }}
+                        >
+                          استعادة
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
 /* ═══════════════════════════════════════════════ Main Board ═══ */
 export default function GameBoardPage() {
   const navigate = useNavigate();

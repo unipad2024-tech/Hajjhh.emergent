@@ -67,6 +67,18 @@ export const GameProvider = ({ children }) => {
     return selectedQuestions.has(tileKey);
   }, [selectedQuestions]);
 
+  // Restore (undo) a tile — removes it from used set so it reappears on board
+  const restoreTile = useCallback((tileKey) => {
+    setSelectedQuestions(prev => {
+      const next = new Set(prev);
+      next.delete(tileKey);
+      if (session?.id) {
+        localStorage.setItem(`used_${session.id}`, JSON.stringify([...next]));
+      }
+      return next;
+    });
+  }, [session]);
+
   const toggleDarkMode = () => {
     const next = !darkMode;
     setDarkMode(next);
@@ -77,6 +89,12 @@ export const GameProvider = ({ children }) => {
     const next = currentTurn === 1 ? 2 : 1;
     setCurrentTurn(next);
     localStorage.setItem("hujjah_turn", String(next));
+  };
+
+  // Manual turn override — set to specific team
+  const setTurn = (team) => {
+    setCurrentTurn(team);
+    localStorage.setItem("hujjah_turn", String(team));
   };
 
   const resetTurn = () => {
@@ -184,6 +202,21 @@ export const GameProvider = ({ children }) => {
     }
   };
 
+  // Set a team's score to an exact value (Game Master live edit)
+  const setExactScore = async (team, value) => {
+    const current = team === 1 ? teamScores.team1 : teamScores.team2;
+    const delta = value - current;
+    if (delta === 0) return;
+    return await updateScore(team, delta);
+  };
+
+  // Adjust score with a signed delta string like "+300" or "-200"
+  const adjustScoreDelta = async (team, deltaStr) => {
+    const delta = parseInt(deltaStr, 10);
+    if (isNaN(delta)) return { error: "قيمة غير صالحة" };
+    return await updateScore(team, delta);
+  };
+
   const resetGame = () => {
     saveSession(null);
     resetTurn();
@@ -198,11 +231,11 @@ export const GameProvider = ({ children }) => {
       session, loading, currentUser, userToken, darkMode, gameSettings, currentTurn,
       currentQuestion, setCurrentQuestion,
       remainingTime, setRemainingTime,
-      selectedQuestions, markTileUsed, isTileUsed,
+      selectedQuestions, markTileUsed, isTileUsed, restoreTile,
       teamScores,
-      createSession, updateSession, getNextQuestion, updateScore,
+      createSession, updateSession, getNextQuestion, updateScore, setExactScore, adjustScoreDelta,
       resetGame, saveSession, loginUser, registerUser, logoutUser, refreshUser,
-      toggleDarkMode, switchTurn, resetTurn
+      toggleDarkMode, switchTurn, setTurn, resetTurn
     }}>
       {children}
     </GameContext.Provider>
