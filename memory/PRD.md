@@ -101,9 +101,33 @@ HUJJAH is a competitive team trivia social game for Saudi gatherings, now transf
   - يشمل: Schema كامل، API، Auth، Stripe، Gemini، دليل إعادة البناء
   - آخر تحديث: فبراير 2026
 
-## P0/P1/P2 Backlog
+## CHANGELOG
 
-### P0 (Critical - done ✓)
+### Feb 2026 — 7 Feature Improvements
+- **Game State Sync**: Moved selectedQuestions, currentQuestion, teamScores, remainingTime to central GameContext. markTileUsed/isTileUsed prevent race conditions.
+- **AI Generator + Prompt**: Added custom `prompt_description` textarea in admin AI tab. Backend passes it to Gemini.
+- **Premium Categories**: Added 10 premium locked categories (cat_football, cat_anime, cat_movies, cat_games, cat_history, cat_geo, cat_tech, cat_food, cat_cars, cat_space) with 150 starter questions. Free users see locked categories with gold lock icon.
+- **Payment Prep**: Added PAYMENT_PUBLIC_KEY/PAYMENT_SECRET_KEY env vars + /api/payment/config endpoint.
+- **Admin Control**: Added is_premium checkbox to category form. Admin can manage premium categories.
+- **UI**: Bigger score buttons (3.5rem), pulsing turn indicator, larger category cards.
+
+### P0 (done ✓)
+- Admin panel: full CRUD, AI generator with custom prompt
+- Dynamic trial mode manager
+- Game state central sync (GameContext)
+- 20 categories: 10 free + 10 premium (locked for free users)
+- 608 questions total
+
+### P1 (backlog)
+- Supabase migration
+- Stripe live keys
+- More premium questions (use AI generator)
+
+### P2 (future)
+- Multi-room support
+- User game history analytics
+- Custom user-created categories
+
 - [x] Full game flow
 - [x] Admin CRUD
 - [x] QR secret word system
