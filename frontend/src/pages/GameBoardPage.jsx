@@ -618,7 +618,8 @@ export default function GameBoardPage() {
   const navigate = useNavigate();
   const {
     session, resetGame, darkMode, toggleDarkMode, currentTurn, switchTurn,
-    markTileUsed, isTileUsed, selectedQuestions, teamScores, saveSession
+    markTileUsed, isTileUsed, selectedQuestions, teamScores, saveSession,
+    adjustScoreDelta, setExactScore, setTurn, restoreTile
   } = useGame();
   const [categories, setCategories]         = useState([]);
   const [loading, setLoading]               = useState(true);
@@ -850,6 +851,21 @@ export default function GameBoardPage() {
         ))}
       </div>
 
+      {/* ── Game Master Panel ── */}
+      <GameMasterPanel
+        session={session}
+        teamScores={teamScores}
+        currentTurn={currentTurn}
+        selectedQuestions={selectedQuestions}
+        categories={categories}
+        adjustScoreDelta={adjustScoreDelta}
+        setExactScore={setExactScore}
+        setTurn={setTurn}
+        switchTurn={switchTurn}
+        restoreTile={restoreTile}
+        dark={darkMode}
+      />
+
       {/* ── Legend ── */}
       <div className="shrink-0 flex justify-center gap-6 pb-1.5 pt-0.5">
         <div className={`flex items-center gap-2 px-3 py-1 rounded-full transition-all duration-500 ${currentTurn === 1 ? "bg-red-500/20" : ""}`}>
@@ -914,12 +930,12 @@ export default function GameBoardPage() {
           <div className="flex gap-8 mb-8">
             <div className="text-center rounded-2xl px-6 py-4" style={{ background: darkMode ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.7)" }}>
               <div className="text-red-500 text-sm font-bold mb-1">{session?.team1_name}</div>
-              <div className="text-3xl font-black" style={{ color: P.textMain }}>{scores.team1}</div>
+              <div className="text-3xl font-black" style={{ color: P.textMain }}>{teamScores.team1}</div>
             </div>
             <div className="flex items-center text-gray-400 text-xl">VS</div>
             <div className="text-center rounded-2xl px-6 py-4" style={{ background: darkMode ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.7)" }}>
               <div className="text-blue-500 text-sm font-bold mb-1">{session?.team2_name}</div>
-              <div className="text-3xl font-black" style={{ color: P.textMain }}>{scores.team2}</div>
+              <div className="text-3xl font-black" style={{ color: P.textMain }}>{teamScores.team2}</div>
             </div>
           </div>
           <button
