@@ -103,6 +103,15 @@ HUJJAH is a competitive team trivia social game for Saudi gatherings, now transf
 
 ## CHANGELOG
 
+### Feb 2026 — Game Modes, Tournament, Multi-Team, Premium Fix
+- **Game Mode Select Page** (`/mode`): 3 cards (Standard / Multi-team / Tournament) — 'العب الحين' now routes here
+- **Multi-Team Mode** (`/multi-setup`, `/multi-game`): 3 or 4 teams, each with own column (300/600/900×2 slots), auto-assigned categories, full GMP panel with N-team score adjust + turn control
+- **Tournament Mode** (`/tournament`, `/tournament/bracket`): 4/6/8 teams, auto bracket generation (QF→SF→Final), match play/record, champion banner
+- **Premium Bug Fix**: `CategorySelectPage` calls `refreshUser()` on mount — admin-upgraded users now immediately see unlocked categories
+- **GMP Button Redesign**: From tiny ⚙ icon → wide pill `⚙ لوحة المضيف` (min-width 140px, burgundy gradient, gold border)
+- **QuestionPage Multi-Mode**: Score assignment buttons dynamically show all multi-team members instead of 2-team buttons
+- **Back to Tournament**: Winner screen in GameBoardPage shows '🏆 العودة للبطولة' when `gameMode === "tournament"`
+
 ### Feb 2026 — UI/UX Improvements (Items 8-10)
 - **Team Size Recommendation**: Added non-blocking tip "💡 يُنصح بلاعبين أو أكثر لكل فريق" on TeamSetupPage
 - **Larger Timer**: SVG timer on QuestionPage scaled to clamp(130px, 16vh, 210px) — 173px on 1080p TV
