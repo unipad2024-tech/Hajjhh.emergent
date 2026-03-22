@@ -103,7 +103,14 @@ HUJJAH is a competitive team trivia social game for Saudi gatherings, now transf
 
 ## CHANGELOG
 
-### Feb 2026 — 7 Feature Improvements
+### Feb 2026 — UI/UX Improvements (Items 8-10)
+- **Team Size Recommendation**: Added non-blocking tip "💡 يُنصح بلاعبين أو أكثر لكل فريق" on TeamSetupPage
+- **Larger Timer**: SVG timer on QuestionPage scaled to clamp(130px, 16vh, 210px) — 173px on 1080p TV
+- **Larger Team Names**: Game board score bar team names clamp(1.1rem, 2.8vw, 2.2rem), scores clamp(2.2rem, 5vw, 4.2rem)
+- **Larger Score Buttons**: Assign buttons show team name (1.7rem) + points (4.5rem) for TV readability
+- **Bigger Category Names**: clamp(0.85rem, 1.8vw, 1.3rem) on board cards
+
+
 - **Game State Sync**: Moved selectedQuestions, currentQuestion, teamScores, remainingTime to central GameContext. markTileUsed/isTileUsed prevent race conditions.
 - **AI Generator + Prompt**: Added custom `prompt_description` textarea in admin AI tab. Backend passes it to Gemini.
 - **Premium Categories**: Added 10 premium locked categories (cat_football, cat_anime, cat_movies, cat_games, cat_history, cat_geo, cat_tech, cat_food, cat_cars, cat_space) with 150 starter questions. Free users see locked categories with gold lock icon.
