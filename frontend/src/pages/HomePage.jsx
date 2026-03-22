@@ -121,7 +121,7 @@ export default function HomePage() {
         {/* ── CTA ── */}
         <button
           data-testid="start-game-btn"
-          onClick={() => navigate("/setup")}
+          onClick={() => navigate("/mode")}
           className="animate-pulse-glow animate-fade-in-up mb-10 bg-secondary text-primary font-black rounded-full border-2 border-secondary/80 shadow-2xl hover:scale-105 transition-all duration-300"
           style={{
             animationDelay:"0.2s",

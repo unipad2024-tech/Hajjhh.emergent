@@ -34,7 +34,7 @@ export default function TeamSetupPage() {
         {/* Back */}
         <button
           data-testid="back-btn"
-          onClick={() => navigate("/")}
+          onClick={() => navigate("/mode")}
           className="text-secondary/60 hover:text-secondary mb-6 flex items-center gap-2 transition-colors"
         >
           ← رجوع

@@ -9,7 +9,7 @@ const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 export default function CategorySelectPage() {
   const navigate = useNavigate();
-  const { session, updateSession, saveSession, currentUser, darkMode } = useGame();
+  const { session, updateSession, saveSession, currentUser, darkMode, refreshUser, userToken } = useGame();
 
   const [categories, setCategories]       = useState([]);
   const [freeData, setFreeData]           = useState(null);
@@ -22,6 +22,7 @@ export default function CategorySelectPage() {
 
   useEffect(() => {
     if (!session) { navigate("/setup"); return; }
+    if (userToken) refreshUser(); // refresh subscription status in case admin updated it
     loadCategories();
   }, []); // eslint-disable-line
 

@@ -278,25 +278,28 @@ function GameMasterPanel({ session, teamScores, currentTurn, selectedQuestions,
 
   return (
     <>
-      {/* ── Floating Toggle Button ── */}
+      {/* ── Game Master Toggle Button (redesigned) ── */}
       <button
         data-testid="gmp-toggle-btn"
         onClick={() => setOpen(o => !o)}
         title="لوحة تحكم المضيف"
-        className="fixed z-[10000] flex items-center justify-center rounded-2xl font-black shadow-2xl transition-all hover:scale-110 active:scale-95"
+        className="fixed z-[10000] flex items-center gap-2 rounded-2xl font-black shadow-2xl transition-all hover:scale-105 active:scale-95"
         style={{
-          bottom: "clamp(14px,2.5vh,24px)",
-          right: "clamp(14px,2vw,24px)",
-          width: "clamp(46px,5vw,60px)",
-          height: "clamp(46px,5vw,60px)",
-          background: open ? "#5B0E14" : "rgba(91,14,20,0.88)",
-          border: "2px solid rgba(241,225,148,0.35)",
+          bottom: "clamp(16px,2.5vh,28px)",
+          right: "clamp(16px,2vw,28px)",
+          background: open
+            ? "linear-gradient(135deg,#5B0E14,#8B1520)"
+            : "linear-gradient(135deg,rgba(91,14,20,0.95),rgba(139,21,32,0.95))",
+          border: "2px solid rgba(241,225,148,0.45)",
           color: "#F1E194",
-          fontSize: "clamp(1.1rem,2vw,1.4rem)",
-          boxShadow: "0 4px 24px rgba(91,14,20,0.6)",
+          padding: "clamp(10px,1.5vh,16px) clamp(16px,2.2vw,28px)",
+          boxShadow: "0 6px 32px rgba(91,14,20,0.65), 0 2px 8px rgba(0,0,0,0.4)",
+          backdropFilter: "blur(8px)",
+          minWidth: "clamp(140px,14vw,180px)",
         }}
       >
-        {open ? "✕" : "⚙"}
+        <span style={{ fontSize: "clamp(1.1rem,1.8vw,1.4rem)" }}>⚙</span>
+        <span style={{ fontSize: "clamp(0.8rem,1.3vw,1rem)" }}>{open ? "إغلاق" : "لوحة المضيف"}</span>
       </button>
 
       {/* ── Backdrop ── */}
@@ -619,7 +622,7 @@ export default function GameBoardPage() {
   const {
     session, resetGame, darkMode, toggleDarkMode, currentTurn, switchTurn,
     markTileUsed, isTileUsed, selectedQuestions, teamScores, saveSession,
-    adjustScoreDelta, setExactScore, setTurn, restoreTile
+    adjustScoreDelta, setExactScore, setTurn, restoreTile, gameMode
   } = useGame();
   const [categories, setCategories]         = useState([]);
   const [loading, setLoading]               = useState(true);
@@ -939,10 +942,13 @@ export default function GameBoardPage() {
             </div>
           </div>
           <button
-            onClick={() => { resetGame(); navigate("/"); }}
+            onClick={() => {
+              if (gameMode === "tournament") { navigate("/tournament/bracket"); }
+              else { resetGame(); navigate("/"); }
+            }}
             className="bg-primary text-secondary px-10 py-4 rounded-full font-black text-xl hover:scale-105 animate-pulse-glow transition-all"
           >
-            🎮 لعبة جديدة
+            {gameMode === "tournament" ? "🏆 العودة للبطولة" : "🎮 لعبة جديدة"}
           </button>
         </div>
       )}

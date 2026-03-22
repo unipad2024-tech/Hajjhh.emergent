@@ -40,6 +40,18 @@ export const GameProvider = ({ children }) => {
     } catch { return { team1: 0, team2: 0 }; }
   });
 
+  // ─── Game Mode ───────────────────────────────────────────────────────────────
+  const [gameMode, setGameModeState] = useState(() => localStorage.getItem("hujjah_mode") || "standard");
+  const [multiTeams, setMultiTeams] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("hujjah_multiteams") || "[]"); } catch { return []; }
+  });
+  const [multiScores, setMultiScores] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("hujjah_multiscores") || "{}"); } catch { return {}; }
+  });
+  const [tournamentState, setTournamentState] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("hujjah_tournament") || "null"); } catch { return null; }
+  });
+
   // Load settings on mount
   useEffect(() => {
     axios.get(`${API}/settings`).then(({ data }) => setGameSettings(data)).catch(() => {});
@@ -78,6 +90,51 @@ export const GameProvider = ({ children }) => {
       return next;
     });
   }, [session]);
+
+  const setGameMode = (mode) => {
+    setGameModeState(mode);
+    localStorage.setItem("hujjah_mode", mode);
+  };
+
+  const initMultiTeams = (teams) => {
+    setMultiTeams(teams);
+    localStorage.setItem("hujjah_multiteams", JSON.stringify(teams));
+    const scores = {};
+    teams.forEach(t => { scores[t.id] = 0; });
+    setMultiScores(scores);
+    localStorage.setItem("hujjah_multiscores", JSON.stringify(scores));
+    localStorage.removeItem("hujjah_multi_used");
+  };
+
+  const adjustMultiScore = (teamId, delta) => {
+    setMultiScores(prev => {
+      const next = { ...prev, [teamId]: (prev[teamId] || 0) + delta };
+      localStorage.setItem("hujjah_multiscores", JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const setMultiScoreExact = (teamId, value) => {
+    setMultiScores(prev => {
+      const next = { ...prev, [teamId]: value };
+      localStorage.setItem("hujjah_multiscores", JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const setTournament = (state) => {
+    setTournamentState(state);
+    if (state) localStorage.setItem("hujjah_tournament", JSON.stringify(state));
+    else localStorage.removeItem("hujjah_tournament");
+  };
+
+  const updateTournament = (updater) => {
+    setTournamentState(prev => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      localStorage.setItem("hujjah_tournament", JSON.stringify(next));
+      return next;
+    });
+  };
 
   const toggleDarkMode = () => {
     const next = !darkMode;
@@ -224,6 +281,7 @@ export const GameProvider = ({ children }) => {
     setRemainingTime(null);
     setSelectedQuestions(new Set());
     setTeamScores({ team1: 0, team2: 0 });
+    localStorage.removeItem("hujjah_multi_used");
   };
 
   return (
@@ -233,6 +291,9 @@ export const GameProvider = ({ children }) => {
       remainingTime, setRemainingTime,
       selectedQuestions, markTileUsed, isTileUsed, restoreTile,
       teamScores,
+      gameMode, setGameMode,
+      multiTeams, multiScores, initMultiTeams, adjustMultiScore, setMultiScoreExact,
+      tournamentState, setTournament, updateTournament,
       createSession, updateSession, getNextQuestion, updateScore, setExactScore, adjustScoreDelta,
       resetGame, saveSession, loginUser, registerUser, logoutUser, refreshUser,
       toggleDarkMode, switchTurn, setTurn, resetTurn
