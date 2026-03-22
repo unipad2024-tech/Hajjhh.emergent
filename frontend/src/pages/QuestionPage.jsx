@@ -7,8 +7,8 @@ import { toast } from "sonner";
 export default function QuestionPage() {
   const navigate = useNavigate();
   const { state } = useLocation();
-  const { session, updateScore, gameSettings, switchTurn, teamScores, multiTeams, adjustMultiScore } = useGame();
-  const { question, catName, slot, turnTeam, multiMode, multiTeamId } = state || {};
+  const { session, updateScore, gameSettings, switchTurn, teamScores } = useGame();
+  const { question, catName, slot, turnTeam } = state || {};
 
   // ─── Determine timer duration from settings ───────────────────────────────
   const isWordCat = question?.category_id === "cat_word" || question?.question_type === "secret_word";
@@ -88,14 +88,8 @@ export default function QuestionPage() {
   const handleAssign = async (team) => {
     if (assigned) return;
     const pts = question?.difficulty || 300;
-    if (multiMode) {
-      // In multi-team mode, `team` is the team object {id, name, color}
-      adjustMultiScore(team.id, pts);
-      setScoredTeam(team.name);
-    } else {
-      await updateScore(team, pts);
-      setScoredTeam(team);
-    }
+    await updateScore(team, pts);
+    setScoredTeam(team);
     setAssigned(true);
     playCorrect();
     window.dispatchEvent(new Event("scoreUpdated"));
@@ -103,10 +97,7 @@ export default function QuestionPage() {
   };
 
   const handleSkip = () => setAssigned(true);
-  const handleBack = () => {
-    if (multiMode) { navigate("/multi-game"); }
-    else { switchTurn(); navigate("/game"); }
-  };
+  const handleBack = () => { switchTurn(); navigate("/game"); };
 
   if (!question) { navigate("/game"); return null; }
 
@@ -323,64 +314,31 @@ export default function QuestionPage() {
                   <div className="mt-4">
                     <div className="text-secondary/50 text-sm text-center mb-3">من أجاب صح؟</div>
                     <div className="flex gap-4 justify-center flex-wrap">
-                      {multiMode && multiTeams?.length > 0 ? (
-                        // Multi-team mode: show all teams
-                        <>
-                          {multiTeams.map((team) => (
-                            <button
-                              key={team.id}
-                              data-testid={`assign-multi-${team.id}-btn`}
-                              onClick={() => handleAssign(team)}
-                              className="flex flex-col items-center justify-center border-2 text-white px-6 py-4 rounded-2xl font-bold hover:scale-105 transition-all"
-                              style={{
-                                background: `linear-gradient(135deg, ${team.color}99, ${team.color}dd)`,
-                                borderColor: `${team.color}88`,
-                                minWidth: "clamp(120px,18vw,200px)",
-                                boxShadow: `0 0 20px ${team.color}44`,
-                              }}
-                            >
-                              <span className="font-black" style={{ fontSize: "clamp(1rem,1.8vw,1.5rem)" }}>{team.name}</span>
-                              <span className="font-black" style={{ fontSize: "clamp(2rem,4vw,3.5rem)" }}>+{question.difficulty}</span>
-                            </button>
-                          ))}
-                          <button
-                            data-testid="skip-points-btn"
-                            onClick={handleSkip}
-                            className="border border-secondary/20 text-secondary/40 px-6 py-4 rounded-2xl font-bold text-sm hover:text-secondary/70 transition-all self-center"
-                          >
-                            لا أحد
-                          </button>
-                        </>
-                      ) : (
-                        // Standard 2-team mode
-                        <>
-                          <button
-                            data-testid="assign-team1-btn"
-                            onClick={() => handleAssign(1)}
-                            className="flex flex-col items-center justify-center bg-gradient-to-br from-red-700 to-red-950 border-2 border-red-400/50 text-white px-8 py-5 rounded-2xl font-bold hover:scale-105 hover:shadow-[0_0_35px_rgba(239,68,68,0.6)] transition-all"
-                            style={{ minWidth: "clamp(160px,22vw,260px)" }}
-                          >
-                            <span className="font-black" style={{ fontSize: "clamp(1.1rem, 2vw, 1.7rem)", marginBottom: "4px" }}>🔴 {session?.team1_name}</span>
-                            <span className="font-black text-red-200" style={{ fontSize: "clamp(2.4rem, 4.8vw, 4.5rem)" }}>+{question.difficulty}</span>
-                          </button>
-                          <button
-                            data-testid="assign-team2-btn"
-                            onClick={() => handleAssign(2)}
-                            className="flex flex-col items-center justify-center bg-gradient-to-br from-blue-700 to-blue-950 border-2 border-blue-400/50 text-white px-8 py-5 rounded-2xl font-bold hover:scale-105 hover:shadow-[0_0_35px_rgba(59,130,246,0.6)] transition-all"
-                            style={{ minWidth: "clamp(160px,22vw,260px)" }}
-                          >
-                            <span className="font-black" style={{ fontSize: "clamp(1.1rem, 2vw, 1.7rem)", marginBottom: "4px" }}>🔵 {session?.team2_name}</span>
-                            <span className="font-black text-blue-200" style={{ fontSize: "clamp(2.4rem, 4.8vw, 4.5rem)" }}>+{question.difficulty}</span>
-                          </button>
-                          <button
-                            data-testid="skip-points-btn"
-                            onClick={handleSkip}
-                            className="border border-secondary/20 text-secondary/40 px-6 py-5 rounded-2xl font-bold text-sm hover:text-secondary/70 hover:border-secondary/40 transition-all self-center"
-                          >
-                            لا أحد
-                          </button>
-                        </>
-                      )}
+                      <button
+                        data-testid="assign-team1-btn"
+                        onClick={() => handleAssign(1)}
+                        className="flex flex-col items-center justify-center bg-gradient-to-br from-red-700 to-red-950 border-2 border-red-400/50 text-white px-8 py-5 rounded-2xl font-bold hover:scale-105 hover:shadow-[0_0_35px_rgba(239,68,68,0.6)] transition-all"
+                        style={{ minWidth: "clamp(160px,22vw,260px)" }}
+                      >
+                        <span className="font-black" style={{ fontSize: "clamp(1.1rem, 2vw, 1.7rem)", marginBottom: "4px" }}>🔴 {session?.team1_name}</span>
+                        <span className="font-black text-red-200" style={{ fontSize: "clamp(2.4rem, 4.8vw, 4.5rem)" }}>+{question.difficulty}</span>
+                      </button>
+                      <button
+                        data-testid="assign-team2-btn"
+                        onClick={() => handleAssign(2)}
+                        className="flex flex-col items-center justify-center bg-gradient-to-br from-blue-700 to-blue-950 border-2 border-blue-400/50 text-white px-8 py-5 rounded-2xl font-bold hover:scale-105 hover:shadow-[0_0_35px_rgba(59,130,246,0.6)] transition-all"
+                        style={{ minWidth: "clamp(160px,22vw,260px)" }}
+                      >
+                        <span className="font-black" style={{ fontSize: "clamp(1.1rem, 2vw, 1.7rem)", marginBottom: "4px" }}>🔵 {session?.team2_name}</span>
+                        <span className="font-black text-blue-200" style={{ fontSize: "clamp(2.4rem, 4.8vw, 4.5rem)" }}>+{question.difficulty}</span>
+                      </button>
+                      <button
+                        data-testid="skip-points-btn"
+                        onClick={handleSkip}
+                        className="border border-secondary/20 text-secondary/40 px-6 py-5 rounded-2xl font-bold text-sm hover:text-secondary/70 hover:border-secondary/40 transition-all self-center"
+                      >
+                        لا أحد
+                      </button>
                     </div>
                   </div>
                 )}
@@ -389,7 +347,7 @@ export default function QuestionPage() {
                   <div className="mt-4 flex flex-col items-center gap-3 animate-fade-in-up">
                     {scoredTeam && (
                       <div className="text-secondary font-black text-xl">
-                        +{question.difficulty} ✓ {multiMode ? scoredTeam : (scoredTeam === 1 ? session?.team1_name : session?.team2_name)}
+                        +{question.difficulty} ✓ {scoredTeam === 1 ? session?.team1_name : session?.team2_name}
                       </div>
                     )}
                     <button

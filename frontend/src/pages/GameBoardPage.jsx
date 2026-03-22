@@ -622,7 +622,7 @@ export default function GameBoardPage() {
   const {
     session, resetGame, darkMode, toggleDarkMode, currentTurn, switchTurn,
     markTileUsed, isTileUsed, selectedQuestions, teamScores, saveSession,
-    adjustScoreDelta, setExactScore, setTurn, restoreTile, gameMode
+    adjustScoreDelta, setExactScore, setTurn, restoreTile, gameMode, tournamentState
   } = useGame();
   const [categories, setCategories]         = useState([]);
   const [loading, setLoading]               = useState(true);
@@ -943,8 +943,17 @@ export default function GameBoardPage() {
           </div>
           <button
             onClick={() => {
-              if (gameMode === "tournament") { navigate("/tournament/bracket"); }
-              else { resetGame(); navigate("/"); }
+              if (gameMode === "tournament") {
+                const ref = tournamentState?.currentMatchRef;
+                if (ref) {
+                  const winnerId = teamScores.team1 >= teamScores.team2 ? ref.team1Id : ref.team2Id;
+                  navigate("/tournament/bracket", { state: { autoRecord: { roundIdx: ref.roundIdx, matchIdx: ref.matchIdx, winnerId } } });
+                } else {
+                  navigate("/tournament/bracket");
+                }
+              } else {
+                resetGame(); navigate("/");
+              }
             }}
             className="bg-primary text-secondary px-10 py-4 rounded-full font-black text-xl hover:scale-105 animate-pulse-glow transition-all"
           >

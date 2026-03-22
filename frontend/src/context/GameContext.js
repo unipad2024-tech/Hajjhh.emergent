@@ -40,14 +40,8 @@ export const GameProvider = ({ children }) => {
     } catch { return { team1: 0, team2: 0 }; }
   });
 
-  // ─── Game Mode ───────────────────────────────────────────────────────────────
+  // ─── Game Mode & Tournament ───────────────────────────────────────────────
   const [gameMode, setGameModeState] = useState(() => localStorage.getItem("hujjah_mode") || "standard");
-  const [multiTeams, setMultiTeams] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("hujjah_multiteams") || "[]"); } catch { return []; }
-  });
-  const [multiScores, setMultiScores] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("hujjah_multiscores") || "{}"); } catch { return {}; }
-  });
   const [tournamentState, setTournamentState] = useState(() => {
     try { return JSON.parse(localStorage.getItem("hujjah_tournament") || "null"); } catch { return null; }
   });
@@ -94,32 +88,6 @@ export const GameProvider = ({ children }) => {
   const setGameMode = (mode) => {
     setGameModeState(mode);
     localStorage.setItem("hujjah_mode", mode);
-  };
-
-  const initMultiTeams = (teams) => {
-    setMultiTeams(teams);
-    localStorage.setItem("hujjah_multiteams", JSON.stringify(teams));
-    const scores = {};
-    teams.forEach(t => { scores[t.id] = 0; });
-    setMultiScores(scores);
-    localStorage.setItem("hujjah_multiscores", JSON.stringify(scores));
-    localStorage.removeItem("hujjah_multi_used");
-  };
-
-  const adjustMultiScore = (teamId, delta) => {
-    setMultiScores(prev => {
-      const next = { ...prev, [teamId]: (prev[teamId] || 0) + delta };
-      localStorage.setItem("hujjah_multiscores", JSON.stringify(next));
-      return next;
-    });
-  };
-
-  const setMultiScoreExact = (teamId, value) => {
-    setMultiScores(prev => {
-      const next = { ...prev, [teamId]: value };
-      localStorage.setItem("hujjah_multiscores", JSON.stringify(next));
-      return next;
-    });
   };
 
   const setTournament = (state) => {
@@ -292,7 +260,6 @@ export const GameProvider = ({ children }) => {
       selectedQuestions, markTileUsed, isTileUsed, restoreTile,
       teamScores,
       gameMode, setGameMode,
-      multiTeams, multiScores, initMultiTeams, adjustMultiScore, setMultiScoreExact,
       tournamentState, setTournament, updateTournament,
       createSession, updateSession, getNextQuestion, updateScore, setExactScore, adjustScoreDelta,
       resetGame, saveSession, loginUser, registerUser, logoutUser, refreshUser,

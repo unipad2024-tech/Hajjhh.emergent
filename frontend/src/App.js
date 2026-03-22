@@ -11,8 +11,6 @@ import PricingPage from "@/pages/PricingPage";
 import PaymentSuccessPage from "@/pages/PaymentSuccessPage";
 import GameModeSelectPage from "@/pages/GameModeSelectPage";
 import TeamSetupPage from "@/pages/TeamSetupPage";
-import MultiTeamSetupPage from "@/pages/MultiTeamSetupPage";
-import MultiTeamBoardPage from "@/pages/MultiTeamBoardPage";
 import TournamentSetupPage from "@/pages/TournamentSetupPage";
 import TournamentBracketPage from "@/pages/TournamentBracketPage";
 import CategorySelectPage from "@/pages/CategorySelectPage";
@@ -35,8 +33,6 @@ function App() {
             <Route path="/payment/success" element={<PaymentSuccessPage />} />
             <Route path="/mode" element={<GameModeSelectPage />} />
             <Route path="/setup" element={<TeamSetupPage />} />
-            <Route path="/multi-setup" element={<MultiTeamSetupPage />} />
-            <Route path="/multi-game" element={<MultiTeamBoardPage />} />
             <Route path="/tournament" element={<TournamentSetupPage />} />
             <Route path="/tournament/bracket" element={<TournamentBracketPage />} />
             <Route path="/categories" element={<CategorySelectPage />} />
