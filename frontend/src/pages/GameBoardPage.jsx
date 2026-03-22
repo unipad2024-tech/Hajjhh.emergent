@@ -283,7 +283,7 @@ function GameMasterPanel({ session, teamScores, currentTurn, selectedQuestions,
         data-testid="gmp-toggle-btn"
         onClick={() => setOpen(o => !o)}
         title="لوحة تحكم المضيف"
-        className="fixed z-50 flex items-center justify-center rounded-2xl font-black shadow-2xl transition-all hover:scale-110 active:scale-95"
+        className="fixed z-[10000] flex items-center justify-center rounded-2xl font-black shadow-2xl transition-all hover:scale-110 active:scale-95"
         style={{
           bottom: "clamp(14px,2.5vh,24px)",
           right: "clamp(14px,2vw,24px)",
@@ -311,7 +311,7 @@ function GameMasterPanel({ session, teamScores, currentTurn, selectedQuestions,
       {/* ── Panel ── */}
       <div
         data-testid="gmp-panel"
-        className="fixed top-0 right-0 h-full z-50 flex flex-col overflow-hidden"
+        className="fixed top-0 right-0 h-full z-[10001] flex flex-col overflow-hidden"
         style={{
           width: "clamp(300px,28vw,360px)",
           background: BG,

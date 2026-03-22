@@ -124,6 +124,10 @@ HUJJAH is a competitive team trivia social game for Saudi gatherings, now transf
 - Game state central sync (GameContext)
 - 20 categories: 10 free + 10 premium (locked for free users)
 - 608 questions total
+- **Game Master Panel**: score adjust (+/-), direct score edit, turn control, tile restore — Feb 2026
+- **Timer Controls**: pause/resume/reset/restart in QuestionPage — Feb 2026
+- **Bug Fix**: Winner screen scores display (scores→teamScores) — Feb 2026
+- **Bug Fix**: GMP toggle button z-index raised above Emergent badge — Feb 2026
 
 ### P1 (backlog)
 - Supabase migration
