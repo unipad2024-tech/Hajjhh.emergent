@@ -415,7 +415,7 @@ export default function TournamentBracketPage() {
       </div>
 
       {/* ── Progress bar ── */}
-      <div className="shrink-0 h-1" style={{ background: "rgba(241,225,148,0.06)" }}>
+      <div data-testid="bracket-progress" className="shrink-0 h-1" style={{ background: "rgba(241,225,148,0.06)" }}>
         <div
           className="h-full transition-all duration-700"
           style={{
@@ -428,6 +428,7 @@ export default function TournamentBracketPage() {
       {/* ── Next match banner ── */}
       {nextMatchData && !champion && (
         <div
+          data-testid="next-match-banner"
           className="shrink-0 px-4 py-2.5 text-center border-b"
           style={{
             background: "rgba(91,14,20,0.22)",
