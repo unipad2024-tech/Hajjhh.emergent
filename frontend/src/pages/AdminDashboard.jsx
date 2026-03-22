@@ -47,12 +47,13 @@ export default function AdminDashboard() {
   const [aiCatId, setAiCatId] = useState("");
   const [aiDiff, setAiDiff] = useState(300);
   const [aiCount, setAiCount] = useState(10);
+  const [aiPrompt, setAiPrompt] = useState("");
   const [aiGenerating, setAiGenerating] = useState(false);
   const [aiQuestions, setAiQuestions] = useState([]);
   const [aiSaving, setAiSaving] = useState(false);
 
   // New category form
-  const [catForm, setCatForm] = useState({ name: "", icon: "", description: "", is_special: false, color: "#5B0E14", image_url: "" });
+  const [catForm, setCatForm] = useState({ name: "", icon: "", description: "", is_special: false, is_premium: false, color: "#5B0E14", image_url: "" });
   const [showCatForm, setShowCatForm] = useState(false);
   const [editingCat, setEditingCat] = useState(null);
 
@@ -213,7 +214,7 @@ export default function AdminDashboard() {
 
   const handleEditCat = (cat) => {
     setEditingCat(cat);
-    setCatForm({ name: cat.name, icon: cat.icon || "", description: cat.description || "", is_special: cat.is_special || false, color: cat.color || "#5B0E14", image_url: cat.image_url || "" });
+    setCatForm({ name: cat.name, icon: cat.icon || "", description: cat.description || "", is_special: cat.is_special || false, is_premium: cat.is_premium || false, color: cat.color || "#5B0E14", image_url: cat.image_url || "" });
     setShowCatForm(true);
   };
 
@@ -270,7 +271,10 @@ export default function AdminDashboard() {
     setAiQuestions([]);
     try {
       const { data } = await axios.post(`${API}/ai/generate-questions`, {
-        category_id: aiCatId, difficulty: aiDiff, count: aiCount
+        category_id: aiCatId,
+        difficulty: aiDiff,
+        count: aiCount,
+        prompt_description: aiPrompt.trim() || undefined,
       }, { headers });
       setAiQuestions(data.questions);
       toast.success(`تم توليد ${data.count} سؤال!`);
@@ -768,7 +772,7 @@ export default function AdminDashboard() {
                   className="w-full border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2.5 text-sm font-bold outline-none bg-white"
                 >
                   <option value="">اختر فئة...</option>
-                  {categories.map(c => <option key={c.id} value={c.id}>{c.icon || ""} {c.name}</option>)}
+                  {categories.map(c => <option key={c.id} value={c.id}>{c.icon || ""} {c.name}{c.is_premium ? " ⭐" : ""}</option>)}
                 </select>
               </div>
               <div>
@@ -796,6 +800,26 @@ export default function AdminDashboard() {
                 />
               </div>
             </div>
+
+            {/* Custom Prompt */}
+            <div className="mt-4">
+              <label className="text-sm font-bold text-primary/70 mb-2 block">
+                وصف مخصص للأسئلة (اختياري)
+              </label>
+              <textarea
+                data-testid="ai-prompt-input"
+                value={aiPrompt}
+                onChange={(e) => setAiPrompt(e.target.value)}
+                placeholder="مثال: أسئلة ترفيهية مناسبة لمراهقين سعوديين عن كرة القدم السعودية... أو أسئلة صعبة عن تاريخ الدوري الإنجليزي الممتاز"
+                rows={3}
+                className="w-full border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none resize-none"
+                style={{ fontFamily: "Cairo, sans-serif" }}
+              />
+              <p className="text-xs text-primary/40 mt-1">
+                اكتب وصفاً ليتبعه الذكاء الاصطناعي عند توليد الأسئلة. اتركه فارغاً للتوليد التلقائي.
+              </p>
+            </div>
+
             <button
               data-testid="ai-generate-btn"
               onClick={handleAiGenerate}
@@ -1339,6 +1363,15 @@ export default function AdminDashboard() {
                   className="w-4 h-4"
                 />
                 <span className="text-sm font-bold text-primary/70">فئة خاصة (مثل ولا كلمة)</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={catForm.is_premium}
+                  onChange={(e) => setCatForm({ ...catForm, is_premium: e.target.checked })}
+                  className="w-4 h-4"
+                />
+                <span className="text-sm font-bold text-yellow-700">⭐ فئة Premium (مقفولة للمجانيين)</span>
               </label>
             </div>
             <div className="flex gap-3 mt-4">

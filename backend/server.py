@@ -77,6 +77,7 @@ class Category(BaseModel):
     icon: str = ""
     image_url: str = ""
     is_special: bool = False
+    is_premium: bool = False
     color: str = "#5B0E14"
     order: int = 0
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -87,6 +88,7 @@ class CategoryCreate(BaseModel):
     icon: str = ""
     image_url: str = ""
     is_special: bool = False
+    is_premium: bool = False
     color: str = "#5B0E14"
     order: int = 0
 
@@ -347,7 +349,11 @@ async def admin_payments(_: bool = Depends(get_admin)):
 
 @api_router.get("/categories")
 async def get_categories():
-    return await db.categories.find({}, {"_id": 0}).sort("order", 1).to_list(100)
+    cats = await db.categories.find({}, {"_id": 0}).sort("order", 1).to_list(100)
+    # Ensure is_premium defaults to False for legacy documents
+    for c in cats:
+        c.setdefault("is_premium", False)
+    return cats
 
 @api_router.get("/free-categories")
 async def get_free_categories():
@@ -670,13 +676,269 @@ async def stripe_webhook(request: Request):
     return {"received": True}
 
 # ══════════════════════════════════════════════════════════════════════════════
+# PAYMENT CONFIG (Placeholder for future payment integration)
+# ══════════════════════════════════════════════════════════════════════════════
+
+PAYMENT_PUBLIC_KEY  = os.environ.get("PAYMENT_PUBLIC_KEY", "")
+PAYMENT_SECRET_KEY  = os.environ.get("PAYMENT_SECRET_KEY", "")
+
+@api_router.get("/payment/config")
+async def get_payment_config():
+    """Returns public payment configuration for frontend integration."""
+    return {
+        "public_key": PAYMENT_PUBLIC_KEY,
+        "enabled": bool(PAYMENT_PUBLIC_KEY),
+    }
+
+# ══════════════════════════════════════════════════════════════════════════════
 # SEED
 # ══════════════════════════════════════════════════════════════════════════════
 
 def q(cat, diff, text, answer, img="", aimg="", qtype="text"):
     return {"id": str(uuid.uuid4()), "category_id": cat, "difficulty": diff,
             "text": text, "answer": answer, "image_url": img, "answer_image_url": aimg,
-            "question_type": qtype, "created_at": datetime.now(timezone.utc).isoformat()}
+            "question_type": qtype, "is_experimental": False, "created_at": datetime.now(timezone.utc).isoformat()}
+
+PREMIUM_CATEGORIES_SEED = [
+    {"id":"cat_football","name":"كرة القدم",   "icon":"⚽","image_url":"https://images.unsplash.com/photo-1574629810360-7efbbe195018?w=400&q=80","is_special":False,"is_premium":True,"color":"#064e3b","order":11,"description":"أسئلة كرة القدم العالمية"},
+    {"id":"cat_anime",   "name":"أنمي",         "icon":"🎌","image_url":"https://images.unsplash.com/photo-1578632767115-351597cf2477?w=400&q=80","is_special":False,"is_premium":True,"color":"#831843","order":12,"description":"عالم الأنمي الياباني"},
+    {"id":"cat_movies",  "name":"أفلام",        "icon":"🎥","image_url":"https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=400&q=80","is_special":False,"is_premium":True,"color":"#1e3a5f","order":13,"description":"عالم السينما والأفلام"},
+    {"id":"cat_games",   "name":"ألعاب فيديو",  "icon":"🎮","image_url":"https://images.unsplash.com/photo-1542751371-adc38448a05e?w=400&q=80","is_special":False,"is_premium":True,"color":"#4c1d95","order":14,"description":"ألعاب الفيديو والـ Gaming"},
+    {"id":"cat_history", "name":"تاريخ",        "icon":"📜","image_url":"https://images.unsplash.com/photo-1461360370896-922624d12aa1?w=400&q=80","is_special":False,"is_premium":True,"color":"#78350f","order":15,"description":"الأحداث التاريخية الكبرى"},
+    {"id":"cat_geo",     "name":"جغرافيا",      "icon":"🌍","image_url":"https://images.unsplash.com/photo-1526778548025-fa2f459cd5c1?w=400&q=80","is_special":False,"is_premium":True,"color":"#065f46","order":16,"description":"دول وعواصم وجغرافيا"},
+    {"id":"cat_tech",    "name":"تكنولوجيا",    "icon":"💻","image_url":"https://images.unsplash.com/photo-1518770660439-4636190af475?w=400&q=80","is_special":False,"is_premium":True,"color":"#1e40af","order":17,"description":"عالم التقنية والابتكار"},
+    {"id":"cat_food",    "name":"مأكولات",      "icon":"🍕","image_url":"https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=400&q=80","is_special":False,"is_premium":True,"color":"#c2410c","order":18,"description":"أكلات وطبخ من حول العالم"},
+    {"id":"cat_cars",    "name":"سيارات",       "icon":"🚗","image_url":"https://images.unsplash.com/photo-1503376780353-7e6692767b70?w=400&q=80","is_special":False,"is_premium":True,"color":"#374151","order":19,"description":"عالم السيارات والسباقات"},
+    {"id":"cat_space",   "name":"الفضاء",       "icon":"🚀","image_url":"https://images.unsplash.com/photo-1446776811953-b23d57bd21aa?w=400&q=80","is_special":False,"is_premium":True,"color":"#0c0a2e","order":20,"description":"الكون والفضاء والنجوم"},
+]
+
+@api_router.post("/migrate-premium")
+async def migrate_premium_categories(_: bool = Depends(get_admin)):
+    """Add premium categories to existing DB without resetting data."""
+    added_cats = 0
+    ts = datetime.now(timezone.utc).isoformat()
+    for cat in PREMIUM_CATEGORIES_SEED:
+        existing = await db.categories.find_one({"id": cat["id"]})
+        if not existing:
+            await db.categories.insert_one({**cat, "created_at": ts})
+            added_cats += 1
+        else:
+            # Update is_premium flag if missing
+            await db.categories.update_one({"id": cat["id"]}, {"$set": {"is_premium": True}})
+
+    # Add starter questions for premium categories
+    added_q = 0
+    for cat_id in [c["id"] for c in PREMIUM_CATEGORIES_SEED]:
+        existing_q = await db.questions.count_documents({"category_id": cat_id})
+        if existing_q == 0:
+            # Will be populated when seed data includes them
+            pass
+
+    return {"message": f"تم إضافة {added_cats} فئة Premium", "added_categories": added_cats}
+
+@api_router.post("/migrate-premium-questions")
+async def migrate_premium_questions(_: bool = Depends(get_admin)):
+    """Add starter questions for premium categories that have none."""
+    return await _insert_premium_questions()
+
+async def _insert_premium_questions() -> dict:
+    premium_qs = _build_premium_questions()
+    added = 0
+    for pq in premium_qs:
+        existing = await db.questions.count_documents({"category_id": pq["category_id"], "difficulty": pq["difficulty"]})
+        if existing < 15:  # only add if not enough questions
+            await db.questions.insert_one(pq)
+            added += 1
+    return {"message": f"تم إضافة {added} سؤال للفئات المدفوعة", "added": added}
+
+def _build_premium_questions() -> list:
+    qs = []
+    def qq(cat, diff, text, answer):
+        return {"id": str(uuid.uuid4()), "category_id": cat, "difficulty": diff, "text": text,
+                "answer": answer, "image_url": "", "answer_image_url": "",
+                "question_type": "text", "is_experimental": False,
+                "created_at": datetime.now(timezone.utc).isoformat()}
+    # كرة القدم
+    qs += [
+        qq("cat_football",300,"من فاز بكأس العالم 2018؟","فرنسا"),
+        qq("cat_football",300,"ما عدد لاعبي الكرة في كل فريق؟","11"),
+        qq("cat_football",300,"أكثر دولة فازت بكأس العالم؟","البرازيل"),
+        qq("cat_football",300,"في أي مدينة يقع نادي برشلونة؟","برشلونة"),
+        qq("cat_football",300,"ما لقب نادي ريال مدريد؟","الملكي"),
+        qq("cat_football",600,"من فاز بكأس العالم 2022؟","الأرجنتين"),
+        qq("cat_football",600,"كم مرة فازت ألمانيا بكأس العالم؟","4 مرات"),
+        qq("cat_football",600,"في أي دولة تقام كأس العالم 2026؟","أمريكا"),
+        qq("cat_football",600,"ما لقب ميسي في ملاعب الكرة؟","البرغوث"),
+        qq("cat_football",600,"من هو هداف تاريخ دوري أبطال أوروبا؟","رونالدو البرتغالي"),
+        qq("cat_football",900,"كم عدد دورات كأس العالم حتى 2022؟","22"),
+        qq("cat_football",900,"من هو أصغر هداف في تاريخ كأس العالم؟","بيليه"),
+        qq("cat_football",900,"في أي عام أُقيمت أول نسخة من كأس العالم؟","1930"),
+        qq("cat_football",900,"ما أعلى نتيجة في تاريخ كأس العالم؟","10-1"),
+        qq("cat_football",900,"كم مرة رُشّح رونالدو لجائزة الكرة الذهبية؟","5 مرات"),
+    ]
+    # أنمي
+    qs += [
+        qq("cat_anime",300,"ما اسم بطل أنمي ون بيس؟","لوفي"),
+        qq("cat_anime",300,"ما اسم بطل أنمي ناروتو؟","ناروتو أوزوماكي"),
+        qq("cat_anime",300,"من رسم أنمي دراغون بول؟","أكيرا تورياما"),
+        qq("cat_anime",300,"في ناروتو ما اسم فريق كاكاشي؟","الفريق 7"),
+        qq("cat_anime",300,"ما قوة لوفي في ون بيس؟","المطاط"),
+        qq("cat_anime",600,"من أخرج فيلم رحلة شيهيرو؟","هاياو ميازاكي"),
+        qq("cat_anime",600,"ما اسم شركة أنمي جيبلي؟","استوديو جيبلي"),
+        qq("cat_anime",600,"من رسم هجوم العمالقة؟","هاجيمي إيساياما"),
+        qq("cat_anime",600,"ما اسم البطل في هجوم العمالقة؟","إيرين ييغر"),
+        qq("cat_anime",600,"ما معنى كلمة سنباي باليابانية؟","الأستاذ / الأكبر"),
+        qq("cat_anime",900,"في أي عام بدأ بث أنمي ون بيس؟","1999"),
+        qq("cat_anime",900,"ما أطول أنمي من حيث عدد الحلقات؟","سازاي-سان"),
+        qq("cat_anime",900,"ما معنى كلمة أنمي؟","رسوم متحركة"),
+        qq("cat_anime",900,"من مؤلف أنمي ناروتو؟","ماساشي كيشيموتو"),
+        qq("cat_anime",900,"ما اسم قرية ناروتو؟","قرية أوراق الشجر"),
+    ]
+    # أفلام
+    qs += [
+        qq("cat_movies",300,"أكثر فيلم إيرادات في التاريخ؟","أفاتار"),
+        qq("cat_movies",300,"من أخرج فيلم تيتانيك؟","جيمس كاميرون"),
+        qq("cat_movies",300,"ما اسم بطل الأسد الملك؟","سيمبا"),
+        qq("cat_movies",300,"في أي فيلم تظهر شخصية هيرميون؟","هاري بوتر"),
+        qq("cat_movies",300,"من بطل فيلم إيرون مان؟","توني ستارك"),
+        qq("cat_movies",600,"من أخرج ثلاثية سيد الخواتم؟","بيتر جاكسون"),
+        qq("cat_movies",600,"ما أشهر جائزة سينمائية في العالم؟","الأوسكار"),
+        qq("cat_movies",600,"كم مرة رُشّح ليوناردو للأوسكار قبل الفوز؟","5 مرات"),
+        qq("cat_movies",600,"ما الشركة المنتجة لأفلام مارفل؟","مارفل ستوديوز"),
+        qq("cat_movies",600,"في أي عام صدر أول فيلم Star Wars؟","1977"),
+        qq("cat_movies",900,"من كتب رواية هاري بوتر؟","جيه كيه رولينغ"),
+        qq("cat_movies",900,"ما الفيلم الفائز بأكثر عدد أوسكار؟","تيتانيك وبن هور وملك العودة"),
+        qq("cat_movies",900,"في أي عام صدر فيلم The Dark Knight؟","2008"),
+        qq("cat_movies",900,"من أخرج فيلم Inception؟","كريستوفر نولان"),
+        qq("cat_movies",900,"في أي فيلم يُقال: الحياة كالشوكولاتة؟","فورست غامب"),
+    ]
+    # ألعاب فيديو
+    qs += [
+        qq("cat_games",300,"شركة صانعة PlayStation؟","سوني"),
+        qq("cat_games",300,"شركة صانعة Xbox؟","مايكروسوفت"),
+        qq("cat_games",300,"ما اسم الأميرة في لعبة زيلدا؟","زيلدا"),
+        qq("cat_games",300,"ما أشهر لعبة ماريو؟","سوبر ماريو"),
+        qq("cat_games",300,"شركة صانعة لعبة فورتنايت؟","إيبيك غيمز"),
+        qq("cat_games",600,"في أي عام صدرت أول PlayStation؟","1994"),
+        qq("cat_games",600,"من صمم لعبة سوبر ماريو؟","شيغيرو مياموتو"),
+        qq("cat_games",600,"ما اللعبة الأكثر مبيعاً في التاريخ؟","ماينكرافت"),
+        qq("cat_games",600,"ما اسم بطل لعبة The Legend of Zelda؟","لينك"),
+        qq("cat_games",600,"من صنع لعبة Minecraft؟","موجانج"),
+        qq("cat_games",900,"في أي عام صدر أول إصدار Call of Duty؟","2003"),
+        qq("cat_games",900,"من صمم شخصية Pac-Man؟","توورو إواتاني"),
+        qq("cat_games",900,"ما معنى اختصار RPG في الألعاب؟","لعبة تقمص الأدوار"),
+        qq("cat_games",900,"ما أول لعبة صدرت لـ Sega؟","Altered Beast"),
+        qq("cat_games",900,"ما محرك الرسوميات المستخدم في ألعاب Epic؟","Unreal Engine"),
+    ]
+    # تاريخ
+    qs += [
+        qq("cat_history",300,"من فتح القسطنطينية؟","السلطان محمد الفاتح"),
+        qq("cat_history",300,"متى نزل الإنسان على القمر؟","1969"),
+        qq("cat_history",300,"ما اسم أول إنسان على القمر؟","نيل أرمسترونغ"),
+        qq("cat_history",300,"من بنى الأهرامات؟","الفراعنة"),
+        qq("cat_history",300,"في أي سنة ولد النبي محمد عليه الصلاة والسلام؟","570 ميلادي"),
+        qq("cat_history",600,"ما اسم الحضارة التي بنت ماتشو بيتشو؟","الإنكا"),
+        qq("cat_history",600,"في أي عام انتهت الحرب العالمية الثانية؟","1945"),
+        qq("cat_history",600,"ما اسم أول رئيس للولايات المتحدة؟","جورج واشنطن"),
+        qq("cat_history",600,"في أي عام قامت الثورة الفرنسية؟","1789"),
+        qq("cat_history",600,"من اكتشف أمريكا؟","كريستوفر كولومبوس"),
+        qq("cat_history",900,"متى سقطت الإمبراطورية الرومانية الغربية؟","476 ميلادي"),
+        qq("cat_history",900,"ما اسم المعركة التي انتصر فيها صلاح الدين 1187؟","معركة حطين"),
+        qq("cat_history",900,"في أي عام ألقيت القنبلة الذرية على هيروشيما؟","1945"),
+        qq("cat_history",900,"ما اسم الأسرة التي بنت أكبر الأهرام؟","الأسرة الرابعة"),
+        qq("cat_history",900,"كم استمرت الحرب العالمية الأولى؟","4 سنوات"),
+    ]
+    # جغرافيا
+    qs += [
+        qq("cat_geo",300,"ما أكبر قارة في العالم؟","آسيا"),
+        qq("cat_geo",300,"ما أعلى جبل في العالم؟","إيفرست"),
+        qq("cat_geo",300,"كم دولة في العالم؟","195"),
+        qq("cat_geo",300,"ما عاصمة الصين؟","بكين"),
+        qq("cat_geo",300,"ما أطول نهر في العالم؟","النيل"),
+        qq("cat_geo",600,"ما أصغر دولة في العالم؟","الفاتيكان"),
+        qq("cat_geo",600,"ما أكبر صحراء في العالم؟","الصحراء الكبرى"),
+        qq("cat_geo",600,"ما عاصمة كندا؟","أوتاوا"),
+        qq("cat_geo",600,"ما أعمق بحيرة في العالم؟","بايكال"),
+        qq("cat_geo",600,"ما أكبر محيط في العالم؟","المحيط الهادئ"),
+        qq("cat_geo",900,"ما أصغر قارة في العالم؟","أستراليا"),
+        qq("cat_geo",900,"ما أطول سلسلة جبلية في العالم؟","جبال الأنديز"),
+        qq("cat_geo",900,"ما اسم أكبر جزيرة في العالم؟","غرينلاند"),
+        qq("cat_geo",900,"كم يبلغ محيط الأرض؟","40075 كيلومتر"),
+        qq("cat_geo",900,"ما اسم أعلى بركان في العالم؟","أوخوس ديل سالادو"),
+    ]
+    # تكنولوجيا
+    qs += [
+        qq("cat_tech",300,"من أسس شركة أبل؟","ستيف جوبز"),
+        qq("cat_tech",300,"ما نظام تشغيل الأيفون؟","iOS"),
+        qq("cat_tech",300,"ما تطبيق التواصل الذي أسسه زوكربيرغ؟","فيسبوك"),
+        qq("cat_tech",300,"ما محرك بحث غوغل؟","Google Search"),
+        qq("cat_tech",300,"ما معنى اختصار AI؟","ذكاء اصطناعي"),
+        qq("cat_tech",600,"من أسس شركة تيسلا؟","إيلون ماسك"),
+        qq("cat_tech",600,"من اخترع الإنترنت؟","تيم برنرز لي"),
+        qq("cat_tech",600,"ما معنى CPU؟","وحدة المعالجة المركزية"),
+        qq("cat_tech",600,"ما أول نظام Windows؟","Windows 1.0"),
+        qq("cat_tech",600,"ما تطبيق التواصل الذي يملكه إيلون ماسك؟","X / تويتر"),
+        qq("cat_tech",900,"من اخترع الحاسوب؟","تشارلز بابيج"),
+        qq("cat_tech",900,"ما أول لغة برمجة في التاريخ؟","فورتران"),
+        qq("cat_tech",900,"ما معنى HTML؟","لغة ترميز النص التشعبي"),
+        qq("cat_tech",900,"في أي عام أُطلقت أول نسخة Windows؟","1985"),
+        qq("cat_tech",900,"ما معنى RAM؟","ذاكرة الوصول العشوائي"),
+    ]
+    # مأكولات
+    qs += [
+        qq("cat_food",300,"ما أشهر أكلة سعودية؟","الكبسة"),
+        qq("cat_food",300,"من أي دولة جاءت البيتزا؟","إيطاليا"),
+        qq("cat_food",300,"من أي دولة جاءت السوشي؟","اليابان"),
+        qq("cat_food",300,"ما الفاكهة الأكثر ماءً؟","البطيخ"),
+        qq("cat_food",300,"ما أشهر حلوى عربية؟","الكنافة"),
+        qq("cat_food",600,"ما مكوّن البرغر الأساسي؟","لحم البقر"),
+        qq("cat_food",600,"أي شوكولاتة تحتوي على أعلى نسبة كاكاو؟","الداكنة"),
+        qq("cat_food",600,"ما المكوّن الأساسي في الغوكامولي؟","الأفوكادو"),
+        qq("cat_food",600,"في أي دولة اخترعت الكرواسون؟","النمسا"),
+        qq("cat_food",600,"ما أغلى بهار في العالم؟","الزعفران"),
+        qq("cat_food",900,"ما المكوّنات الرئيسية في صلصة البستو؟","ريحان وزيت زيتون وصنوبر"),
+        qq("cat_food",900,"ما الغذاء الأكثر استهلاكاً في العالم؟","الأرز"),
+        qq("cat_food",900,"ما الفيتامين الأكثر في البرتقال؟","فيتامين C"),
+        qq("cat_food",900,"ما أصل أكلة الشاورما؟","الإمبراطورية العثمانية"),
+        qq("cat_food",900,"ما الحبوب التي يُصنع منها الخبز؟","القمح"),
+    ]
+    # سيارات
+    qs += [
+        qq("cat_cars",300,"ما أشهر شركة سيارات يابانية؟","تويوتا"),
+        qq("cat_cars",300,"من أسس شركة فورد؟","هنري فورد"),
+        qq("cat_cars",300,"ما وقود السيارات الكهربائية؟","الكهرباء"),
+        qq("cat_cars",300,"ما أسرع سيارة في العالم تقريباً؟","بوغاتي شيرون"),
+        qq("cat_cars",300,"في أي دولة تصنع رولز رويس؟","بريطانيا"),
+        qq("cat_cars",600,"من اخترع السيارة؟","كارل بنز"),
+        qq("cat_cars",600,"ما معنى اختصار BMW؟","مصانع محركات بافاريا"),
+        qq("cat_cars",600,"ما الشركة التي تصنع بورشه؟","بورشه AG"),
+        qq("cat_cars",600,"متى اخترعت أول سيارة بمحرك بنزين؟","1885"),
+        qq("cat_cars",600,"ما الدولة الأكثر إنتاجاً للسيارات؟","الصين"),
+        qq("cat_cars",900,"ما معنى ABS في السيارات؟","نظام الفرامل المانع للانسداد"),
+        qq("cat_cars",900,"ما اسم أول سيارة كهربائية شعبية؟","تيسلا رودستر"),
+        qq("cat_cars",900,"كم حصان تملك بوغاتي فيرون؟","1001 حصان"),
+        qq("cat_cars",900,"في أي عام أُنشئت شركة فيراري؟","1939"),
+        qq("cat_cars",900,"ما أغلى سيارة في التاريخ؟","بوغاتي لا فويتير نوار"),
+    ]
+    # الفضاء
+    qs += [
+        qq("cat_space",300,"ما أقرب نجم للأرض؟","الشمس"),
+        qq("cat_space",300,"كم كوكب في المجموعة الشمسية؟","8"),
+        qq("cat_space",300,"ما أكبر كوكب في المجموعة الشمسية؟","المشتري"),
+        qq("cat_space",300,"ما اسم أول إنسان في الفضاء؟","يوري غاغارين"),
+        qq("cat_space",300,"ما اسم الكوكب الأحمر؟","المريخ"),
+        qq("cat_space",600,"كم يبعد القمر عن الأرض؟","384 ألف كيلومتر"),
+        qq("cat_space",600,"ما اسم التلسكوب الفضائي الشهير؟","هابل"),
+        qq("cat_space",600,"كم يستغرق ضوء الشمس للوصول للأرض؟","8 دقائق"),
+        qq("cat_space",600,"ما اسم مجرتنا؟","درب التبانة"),
+        qq("cat_space",600,"ما أبعد كوكب في المجموعة الشمسية؟","نبتون"),
+        qq("cat_space",900,"ما اسم أكبر ثقب أسود مكتشف؟","TON 618"),
+        qq("cat_space",900,"كم يبعد أقرب نجم بعد الشمس؟","4.2 سنة ضوئية"),
+        qq("cat_space",900,"ما الكوكب الذي يدور بشكل عكسي؟","الزهرة"),
+        qq("cat_space",900,"ما اسم مهمة أول إنسان على القمر؟","أبولو 11"),
+        qq("cat_space",900,"كم عدد النجوم في درب التبانة؟","200 إلى 400 مليار نجم"),
+    ]
+    return qs
 
 @api_router.post("/seed")
 async def seed_data(force: bool = False, _: bool = Depends(get_admin)):
@@ -688,16 +950,27 @@ async def seed_data(force: bool = False, _: bool = Depends(get_admin)):
         await db.questions.delete_many({})
 
     categories = [
-        {"id":"cat_flags",   "name":"اعلام دول",      "icon":"🏳️","image_url":"https://static.prod-images.emergentagent.com/jobs/2e2396b6-cc98-44c9-bfbe-97e0e9727ada/images/789e9577be35fbf27c01b939a7864cd14c4aa947ecdd1dffb985e8cf92803c56.png","is_special":False,"color":"#166534","order":1,"description":"خمّن علم الدولة!","created_at":datetime.now(timezone.utc).isoformat()},
-        {"id":"cat_easy",    "name":"معلومات عامة",   "icon":"💡","image_url":"https://static.prod-images.emergentagent.com/jobs/2e2396b6-cc98-44c9-bfbe-97e0e9727ada/images/ef7d4ad149135fb20af44b7c285da0442405131faae6b590a9e3b88bad9deec3.png","is_special":False,"color":"#1e40af","order":2,"description":"معلومات للجميع","created_at":datetime.now(timezone.utc).isoformat()},
-        {"id":"cat_saudi",   "name":"السعودية",       "icon":"🇸🇦","image_url":"https://images.unsplash.com/photo-1722966885396-1f3dcebdf27f?crop=entropy&cs=srgb&fm=jpg&q=85","is_special":False,"color":"#5B0E14","order":3,"description":"أسئلة عن المملكة","created_at":datetime.now(timezone.utc).isoformat()},
-        {"id":"cat_islamic", "name":"اسلامي",         "icon":"☪️","image_url":"https://static.prod-images.emergentagent.com/jobs/2e2396b6-cc98-44c9-bfbe-97e0e9727ada/images/415591654801e274c08fe69190400fa76fc011cbd93e02bdcb51ad4d6c838d24.png","is_special":False,"color":"#065f46","order":4,"description":"أسئلة إسلامية","created_at":datetime.now(timezone.utc).isoformat()},
-        {"id":"cat_science", "name":"علوم",           "icon":"🔬","image_url":"https://static.prod-images.emergentagent.com/jobs/2e2396b6-cc98-44c9-bfbe-97e0e9727ada/images/5a646d99acb87f702e9b9e1b526e57a3aa5e72ea83e1383922de853c3217fcd2.png","is_special":False,"color":"#4c1d95","order":5,"description":"علوم للجميع","created_at":datetime.now(timezone.utc).isoformat()},
-        {"id":"cat_logos",   "name":"شعارات",         "icon":"🏷️","image_url":"https://static.prod-images.emergentagent.com/jobs/2e2396b6-cc98-44c9-bfbe-97e0e9727ada/images/f24c5c166f24d1b9a42f735e4068ea1e7314629e35b6ae5f9004b239034385b2.png","is_special":False,"color":"#7c2d12","order":6,"description":"خمّن الشعار!","created_at":datetime.now(timezone.utc).isoformat()},
-        {"id":"cat_word",    "name":"ولا كلمة",       "icon":"🤫","image_url":"https://static.prod-images.emergentagent.com/jobs/2e2396b6-cc98-44c9-bfbe-97e0e9727ada/images/4dbb8986ed1f7fd1808e2cfe86c647cce9b6418d187c7dc40e0c927a3ca63ba3.png","is_special":True, "color":"#4a044e","order":7,"description":"وصّف بدون ما تقول الكلمة!","created_at":datetime.now(timezone.utc).isoformat()},
-        {"id":"cat_culture", "name":"ثقافة شعبية",    "icon":"🎬","image_url":"https://images.unsplash.com/photo-1771909752746-8fd6c4ca6686?crop=entropy&cs=srgb&fm=jpg&q=85","is_special":False,"color":"#831843","order":8,"description":"مسلسلات وأفلام وبرامج","created_at":datetime.now(timezone.utc).isoformat()},
-        {"id":"cat_sports",  "name":"رياضة",          "icon":"⚽","image_url":"https://static.prod-images.emergentagent.com/jobs/2e2396b6-cc98-44c9-bfbe-97e0e9727ada/images/e51328694c4b4c81a6ee96efd6195f7efcb47bf810bc16433b131fcc4650d516.png","is_special":False,"color":"#134e4a","order":9,"description":"كرة وبطولات","created_at":datetime.now(timezone.utc).isoformat()},
-        {"id":"cat_music",   "name":"موسيقى وفن",     "icon":"🎵","image_url":"https://static.prod-images.emergentagent.com/jobs/2e2396b6-cc98-44c9-bfbe-97e0e9727ada/images/06e0f32385eaf6b70c73ad579e42d9057de72575eed0ac8ee6e226bd5d36eb97.png","is_special":False,"color":"#1e3a5f","order":10,"description":"أغاني وفنانين","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_flags",   "name":"اعلام دول",      "icon":"🏳️","image_url":"https://static.prod-images.emergentagent.com/jobs/2e2396b6-cc98-44c9-bfbe-97e0e9727ada/images/789e9577be35fbf27c01b939a7864cd14c4aa947ecdd1dffb985e8cf92803c56.png","is_special":False,"is_premium":False,"color":"#166534","order":1,"description":"خمّن علم الدولة!","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_easy",    "name":"معلومات عامة",   "icon":"💡","image_url":"https://static.prod-images.emergentagent.com/jobs/2e2396b6-cc98-44c9-bfbe-97e0e9727ada/images/ef7d4ad149135fb20af44b7c285da0442405131faae6b590a9e3b88bad9deec3.png","is_special":False,"is_premium":False,"color":"#1e40af","order":2,"description":"معلومات للجميع","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_saudi",   "name":"السعودية",       "icon":"🇸🇦","image_url":"https://images.unsplash.com/photo-1722966885396-1f3dcebdf27f?crop=entropy&cs=srgb&fm=jpg&q=85","is_special":False,"is_premium":False,"color":"#5B0E14","order":3,"description":"أسئلة عن المملكة","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_islamic", "name":"اسلامي",         "icon":"☪️","image_url":"https://static.prod-images.emergentagent.com/jobs/2e2396b6-cc98-44c9-bfbe-97e0e9727ada/images/415591654801e274c08fe69190400fa76fc011cbd93e02bdcb51ad4d6c838d24.png","is_special":False,"is_premium":False,"color":"#065f46","order":4,"description":"أسئلة إسلامية","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_science", "name":"علوم",           "icon":"🔬","image_url":"https://static.prod-images.emergentagent.com/jobs/2e2396b6-cc98-44c9-bfbe-97e0e9727ada/images/5a646d99acb87f702e9b9e1b526e57a3aa5e72ea83e1383922de853c3217fcd2.png","is_special":False,"is_premium":False,"color":"#4c1d95","order":5,"description":"علوم للجميع","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_logos",   "name":"شعارات",         "icon":"🏷️","image_url":"https://static.prod-images.emergentagent.com/jobs/2e2396b6-cc98-44c9-bfbe-97e0e9727ada/images/f24c5c166f24d1b9a42f735e4068ea1e7314629e35b6ae5f9004b239034385b2.png","is_special":False,"is_premium":False,"color":"#7c2d12","order":6,"description":"خمّن الشعار!","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_word",    "name":"ولا كلمة",       "icon":"🤫","image_url":"https://static.prod-images.emergentagent.com/jobs/2e2396b6-cc98-44c9-bfbe-97e0e9727ada/images/4dbb8986ed1f7fd1808e2cfe86c647cce9b6418d187c7dc40e0c927a3ca63ba3.png","is_special":True, "is_premium":False,"color":"#4a044e","order":7,"description":"وصّف بدون ما تقول الكلمة!","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_culture", "name":"ثقافة شعبية",    "icon":"🎬","image_url":"https://images.unsplash.com/photo-1771909752746-8fd6c4ca6686?crop=entropy&cs=srgb&fm=jpg&q=85","is_special":False,"is_premium":False,"color":"#831843","order":8,"description":"مسلسلات وأفلام وبرامج","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_sports",  "name":"رياضة",          "icon":"⚽","image_url":"https://static.prod-images.emergentagent.com/jobs/2e2396b6-cc98-44c9-bfbe-97e0e9727ada/images/e51328694c4b4c81a6ee96efd6195f7efcb47bf810bc16433b131fcc4650d516.png","is_special":False,"is_premium":False,"color":"#134e4a","order":9,"description":"كرة وبطولات","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_music",   "name":"موسيقى وفن",     "icon":"🎵","image_url":"https://static.prod-images.emergentagent.com/jobs/2e2396b6-cc98-44c9-bfbe-97e0e9727ada/images/06e0f32385eaf6b70c73ad579e42d9057de72575eed0ac8ee6e226bd5d36eb97.png","is_special":False,"is_premium":False,"color":"#1e3a5f","order":10,"description":"أغاني وفنانين","created_at":datetime.now(timezone.utc).isoformat()},
+        # ── Premium Categories ────────────────────────────────────────────────
+        {"id":"cat_football","name":"كرة القدم",       "icon":"⚽","image_url":"https://images.unsplash.com/photo-1574629810360-7efbbe195018?w=400&q=80","is_special":False,"is_premium":True,"color":"#064e3b","order":11,"description":"أسئلة كرة القدم العالمية","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_anime",   "name":"أنمي",            "icon":"🎌","image_url":"https://images.unsplash.com/photo-1578632767115-351597cf2477?w=400&q=80","is_special":False,"is_premium":True,"color":"#831843","order":12,"description":"عالم الأنمي الياباني","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_movies",  "name":"أفلام",           "icon":"🎥","image_url":"https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=400&q=80","is_special":False,"is_premium":True,"color":"#1e3a5f","order":13,"description":"عالم السينما والأفلام","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_games",   "name":"ألعاب فيديو",     "icon":"🎮","image_url":"https://images.unsplash.com/photo-1542751371-adc38448a05e?w=400&q=80","is_special":False,"is_premium":True,"color":"#4c1d95","order":14,"description":"ألعاب الفيديو والـ Gaming","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_history", "name":"تاريخ",           "icon":"📜","image_url":"https://images.unsplash.com/photo-1461360370896-922624d12aa1?w=400&q=80","is_special":False,"is_premium":True,"color":"#78350f","order":15,"description":"الأحداث التاريخية الكبرى","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_geo",     "name":"جغرافيا",         "icon":"🌍","image_url":"https://images.unsplash.com/photo-1526778548025-fa2f459cd5c1?w=400&q=80","is_special":False,"is_premium":True,"color":"#065f46","order":16,"description":"دول وعواصم وجغرافيا","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_tech",    "name":"تكنولوجيا",       "icon":"💻","image_url":"https://images.unsplash.com/photo-1518770660439-4636190af475?w=400&q=80","is_special":False,"is_premium":True,"color":"#1e40af","order":17,"description":"عالم التقنية والابتكار","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_food",    "name":"مأكولات",         "icon":"🍕","image_url":"https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=400&q=80","is_special":False,"is_premium":True,"color":"#c2410c","order":18,"description":"أكلات وطبخ من حول العالم","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_cars",    "name":"سيارات",          "icon":"🚗","image_url":"https://images.unsplash.com/photo-1503376780353-7e6692767b70?w=400&q=80","is_special":False,"is_premium":True,"color":"#374151","order":19,"description":"عالم السيارات والسباقات","created_at":datetime.now(timezone.utc).isoformat()},
+        {"id":"cat_space",   "name":"الفضاء",          "icon":"🚀","image_url":"https://images.unsplash.com/photo-1446776811953-b23d57bd21aa?w=400&q=80","is_special":False,"is_premium":True,"color":"#0c0a2e","order":20,"description":"الكون والفضاء والنجوم","created_at":datetime.now(timezone.utc).isoformat()},
     ]
     await db.categories.insert_many(categories)
 
@@ -1171,6 +1444,176 @@ async def seed_data(force: bool = False, _: bool = Depends(get_admin)):
         q("cat_music",900,"من هو المطرب الكوري الأكثر متابعةً؟","BTS"),
         q("cat_music",900,"وش اسم أداة الموسيقى التقليدية السعودية؟","الدف والمزمار"),
         q("cat_music",900,"في أي سنة صدر ألبوم Thriller؟","1982"),
+
+        # ── كرة القدم (Premium) ───────────────────────────────────────────────
+        q("cat_football",300,"من فاز بكأس العالم 2018؟","فرنسا"),
+        q("cat_football",300,"ما عدد لاعبي الكرة في كل فريق؟","11"),
+        q("cat_football",300,"أكثر دولة فازت بكأس العالم؟","البرازيل"),
+        q("cat_football",300,"في أي مدينة يقع نادي برشلونة؟","برشلونة"),
+        q("cat_football",300,"ما لقب نادي ريال مدريد؟","الملكي"),
+        q("cat_football",600,"من فاز بكأس العالم 2022؟","الأرجنتين"),
+        q("cat_football",600,"كم مرة فازت ألمانيا بكأس العالم؟","4 مرات"),
+        q("cat_football",600,"في أي دولة تقام كأس العالم 2026؟","أمريكا"),
+        q("cat_football",600,"ما لقب ميسي في ملاعب الكرة؟","البرغوث / العبقري"),
+        q("cat_football",600,"من هو هداف تاريخ دوري أبطال أوروبا؟","رونالدو البرتغالي"),
+        q("cat_football",900,"كم عدد دورات كأس العالم حتى 2022؟","22"),
+        q("cat_football",900,"من هو أصغر هداف في تاريخ كأس العالم؟","بيليه"),
+        q("cat_football",900,"في أي عام أُقيمت أول نسخة من كأس العالم؟","1930"),
+        q("cat_football",900,"ما أعلى نتيجة في تاريخ كأس العالم؟","10-1"),
+        q("cat_football",900,"كم مرة رُشّح رونالدو لجائزة الكرة الذهبية؟","5 مرات"),
+
+        # ── أنمي (Premium) ───────────────────────────────────────────────────
+        q("cat_anime",300,"ما اسم بطل أنمي ون بيس؟","لوفي"),
+        q("cat_anime",300,"ما اسم بطل أنمي ناروتو؟","ناروتو أوزوماكي"),
+        q("cat_anime",300,"من رسم أنمي دراغون بول؟","أكيرا تورياما"),
+        q("cat_anime",300,"في ناروتو، ما اسم فريق كاكاشي؟","الفريق 7"),
+        q("cat_anime",300,"ما قوة لوفي في ون بيس؟","جوما جوما (المطاط)"),
+        q("cat_anime",600,"من أخرج فيلم رحلة شيهيرو؟","هاياو ميازاكي"),
+        q("cat_anime",600,"ما اسم الشركة المنتجة لأفلام جيبلي؟","استوديو جيبلي"),
+        q("cat_anime",600,"من رسم هجوم العمالقة؟","هاجيمي إيساياما"),
+        q("cat_anime",600,"ما اسم البطل في أنمي هجوم العمالقة؟","إيرين ييغر"),
+        q("cat_anime",600,"ما معنى كلمة سنباي باليابانية؟","الزميل الأكبر / الأستاذ"),
+        q("cat_anime",900,"في أي عام بدأ بث أنمي ون بيس؟","1999"),
+        q("cat_anime",900,"ما أطول أنمي من حيث عدد الحلقات؟","سازاي-سان"),
+        q("cat_anime",900,"ما معنى كلمة أنمي باليابانية؟","رسوم متحركة"),
+        q("cat_anime",900,"من مؤلف أنمي نارتو؟","ماساشي كيشيموتو"),
+        q("cat_anime",900,"ما اسم القرية في ناروتو التي نشأ فيها؟","قرية أوراق الشجر"),
+
+        # ── أفلام (Premium) ──────────────────────────────────────────────────
+        q("cat_movies",300,"أكثر فيلم إيرادات في التاريخ؟","أفاتار"),
+        q("cat_movies",300,"من أخرج فيلم تيتانيك؟","جيمس كاميرون"),
+        q("cat_movies",300,"ما اسم بطل فيلم الأسد الملك؟","سيمبا"),
+        q("cat_movies",300,"في أي فيلم تظهر شخصية هيرميون؟","هاري بوتر"),
+        q("cat_movies",300,"من بطل فيلم إيرون مان؟","توني ستارك"),
+        q("cat_movies",600,"من أخرج ثلاثية سيد الخواتم؟","بيتر جاكسون"),
+        q("cat_movies",600,"ما الجائزة السينمائية الأشهر في العالم؟","الأوسكار"),
+        q("cat_movies",600,"كم مرة رُشّح ليوناردو ديكابريو للأوسكار قبل أن يفوز؟","5 مرات"),
+        q("cat_movies",600,"ما اسم الشركة المنتجة لأفلام مارفل؟","مارفل ستوديوز"),
+        q("cat_movies",600,"في أي عام صدر أول فيلم Star Wars؟","1977"),
+        q("cat_movies",900,"من كتب رواية هاري بوتر؟","جيه كيه رولينغ"),
+        q("cat_movies",900,"ما الفيلم الذي فاز بأكثر عدد أوسكار في التاريخ؟","تيتانيك / بن هور / ملك العودة (11 أوسكار)"),
+        q("cat_movies",900,"في أي عام صدر فيلم The Dark Knight؟","2008"),
+        q("cat_movies",900,"من أخرج فيلم Inception؟","كريستوفر نولان"),
+        q("cat_movies",900,"ما الفيلم الذي يقول فيه توم هانكس: الحياة كالشوكولاتة؟","فورست غامب"),
+
+        # ── ألعاب فيديو (Premium) ─────────────────────────────────────────────
+        q("cat_games",300,"شركة صانعة PlayStation؟","سوني"),
+        q("cat_games",300,"شركة صانعة Xbox؟","مايكروسوفت"),
+        q("cat_games",300,"ما اسم الأميرة في لعبة زيلدا؟","زيلدا"),
+        q("cat_games",300,"ما أشهر لعبة ماريو؟","سوبر ماريو"),
+        q("cat_games",300,"شركة صانعة لعبة فورتنايت؟","إيبيك غيمز"),
+        q("cat_games",600,"في أي عام صدرت أول PlayStation؟","1994"),
+        q("cat_games",600,"من صمم لعبة سوبر ماريو؟","شيغيرو مياموتو"),
+        q("cat_games",600,"ما اللعبة الأكثر مبيعاً في التاريخ؟","ماينكرافت"),
+        q("cat_games",600,"ما اسم بطل لعبة The Legend of Zelda؟","لينك"),
+        q("cat_games",600,"ما الفريق الذي ابتكر لعبة Minecraft؟","موجانج"),
+        q("cat_games",900,"في أي عام صدر أول إصدار من Call of Duty؟","2003"),
+        q("cat_games",900,"من صمم شخصية Pac-Man؟","توورو إواتاني"),
+        q("cat_games",900,"ما اسم محرك الرسوميات في لعبة Unreal Engine 5؟","Unreal Engine 5"),
+        q("cat_games",900,"ما أول لعبة صدرت لنظام Sega Mega Drive؟","Altered Beast"),
+        q("cat_games",900,"ما معنى اختصار RPG في الألعاب؟","لعبة تقمص الأدوار"),
+
+        # ── تاريخ (Premium) ──────────────────────────────────────────────────
+        q("cat_history",300,"من فتح القسطنطينية؟","السلطان محمد الفاتح"),
+        q("cat_history",300,"متى نزل الإنسان على القمر؟","1969"),
+        q("cat_history",300,"ما اسم أول إنسان على القمر؟","نيل أرمسترونغ"),
+        q("cat_history",300,"من بنى الأهرامات؟","الفراعنة"),
+        q("cat_history",300,"في أي سنة ولد الرسول محمد عليه الصلاة والسلام؟","570 ميلادي"),
+        q("cat_history",600,"ما اسم الحضارة التي بنت ماتشو بيتشو؟","الإنكا"),
+        q("cat_history",600,"في أي عام انتهت الحرب العالمية الثانية؟","1945"),
+        q("cat_history",600,"ما اسم أول رئيس للولايات المتحدة؟","جورج واشنطن"),
+        q("cat_history",600,"في أي عام قامت الثورة الفرنسية؟","1789"),
+        q("cat_history",600,"من اكتشف أمريكا؟","كريستوفر كولومبوس"),
+        q("cat_history",900,"متى سقطت الإمبراطورية الرومانية الغربية؟","476 ميلادي"),
+        q("cat_history",900,"ما اسم المعركة التي انتصر فيها صلاح الدين 1187؟","معركة حطين"),
+        q("cat_history",900,"في أي عام ألقيت القنبلة الذرية على هيروشيما؟","1945"),
+        q("cat_history",900,"ما اسم الأسرة التي بنت الأهرام الأكبر؟","الأسرة الرابعة"),
+        q("cat_history",900,"كم استمرت الحرب العالمية الأولى؟","4 سنوات"),
+
+        # ── جغرافيا (Premium) ────────────────────────────────────────────────
+        q("cat_geo",300,"ما أكبر قارة في العالم؟","آسيا"),
+        q("cat_geo",300,"ما أعلى جبل في العالم؟","إيفرست"),
+        q("cat_geo",300,"كم دولة في العالم تقريباً؟","195"),
+        q("cat_geo",300,"ما عاصمة الصين؟","بكين"),
+        q("cat_geo",300,"ما أطول نهر في العالم؟","النيل"),
+        q("cat_geo",600,"ما أصغر دولة في العالم؟","الفاتيكان"),
+        q("cat_geo",600,"ما أكبر صحراء في العالم؟","الصحراء الكبرى"),
+        q("cat_geo",600,"ما عاصمة كندا؟","أوتاوا"),
+        q("cat_geo",600,"ما أعمق بحيرة في العالم؟","بايكال"),
+        q("cat_geo",600,"ما أكبر محيط في العالم؟","المحيط الهادئ"),
+        q("cat_geo",900,"ما أصغر قارة في العالم؟","أستراليا / أوقيانوسيا"),
+        q("cat_geo",900,"ما أطول سلسلة جبلية في العالم؟","جبال الأنديز"),
+        q("cat_geo",900,"ما اسم أكبر جزيرة في العالم؟","غرينلاند"),
+        q("cat_geo",900,"كم كيلومتر يبلغ محيط الأرض؟","40,075 كيلومتر"),
+        q("cat_geo",900,"ما اسم أعلى بركان في العالم؟","أوخوس ديل سالادو"),
+
+        # ── تكنولوجيا (Premium) ──────────────────────────────────────────────
+        q("cat_tech",300,"من أسس شركة أبل؟","ستيف جوبز"),
+        q("cat_tech",300,"ما نظام تشغيل الأيفون؟","iOS"),
+        q("cat_tech",300,"ما تطبيق التواصل الذي أسسه مارك زوكربيرغ؟","فيسبوك"),
+        q("cat_tech",300,"ما اسم محرك بحث غوغل؟","Google Search"),
+        q("cat_tech",300,"ما معنى اختصار AI؟","ذكاء اصطناعي"),
+        q("cat_tech",600,"من أسس شركة تيسلا للسيارات الكهربائية؟","إيلون ماسك"),
+        q("cat_tech",600,"من اخترع الإنترنت؟","تيم برنرز لي"),
+        q("cat_tech",600,"ما معنى CPU؟","وحدة المعالجة المركزية"),
+        q("cat_tech",600,"ما أول نظام تشغيل Windows إصداراً؟","Windows 1.0"),
+        q("cat_tech",600,"ما تطبيق التواصل الذي يملكه إيلون ماسك؟","X / تويتر"),
+        q("cat_tech",900,"من اخترع الحاسوب؟","تشارلز بابيج"),
+        q("cat_tech",900,"ما أول لغة برمجة في التاريخ؟","فورتران"),
+        q("cat_tech",900,"ما معنى اختصار HTML؟","لغة ترميز النص التشعبي"),
+        q("cat_tech",900,"في أي عام أُطلقت أول نسخة من Windows؟","1985"),
+        q("cat_tech",900,"ما معنى اختصار RAM؟","ذاكرة الوصول العشوائي"),
+
+        # ── مأكولات (Premium) ────────────────────────────────────────────────
+        q("cat_food",300,"ما أشهر أكلة سعودية؟","الكبسة"),
+        q("cat_food",300,"من أي دولة جاءت البيتزا؟","إيطاليا"),
+        q("cat_food",300,"من أي دولة جاءت السوشي؟","اليابان"),
+        q("cat_food",300,"ما الفاكهة التي تحتوي على أكثر كميات الماء؟","البطيخ"),
+        q("cat_food",300,"ما أشهر حلوى عربية؟","الكنافة"),
+        q("cat_food",600,"ما مكوّن البرغر الأساسي؟","لحم البقر"),
+        q("cat_food",600,"ما الشوكولاتة التي تحتوي على أعلى نسبة كاكاو؟","الداكنة"),
+        q("cat_food",600,"ما المكوّن الأساسي في الغوكامولي؟","الأفوكادو"),
+        q("cat_food",600,"في أي دولة اخترعت أكلة الكروسان؟","النمسا"),
+        q("cat_food",600,"ما أغلى بهار في العالم؟","الزعفران"),
+        q("cat_food",900,"ما المكوّنات الرئيسية في صلصة البستو؟","ريحان وزيت زيتون وصنوبر"),
+        q("cat_food",900,"ما الغذاء الأكثر استهلاكاً في العالم؟","الأرز"),
+        q("cat_food",900,"ما الفيتامين الموجود بكثرة في البرتقال؟","فيتامين C"),
+        q("cat_food",900,"ما أصل أكلة الشاورما؟","الإمبراطورية العثمانية"),
+        q("cat_food",900,"ما الحبوب التي يصنع منها الخبز؟","القمح"),
+
+        # ── سيارات (Premium) ─────────────────────────────────────────────────
+        q("cat_cars",300,"ما أشهر شركة سيارات يابانية؟","تويوتا"),
+        q("cat_cars",300,"من أسس شركة فورد؟","هنري فورد"),
+        q("cat_cars",300,"ما وقود السيارات الكهربائية؟","الكهرباء"),
+        q("cat_cars",300,"من صنّع سيارة رولز رويس؟","بريطانيا"),
+        q("cat_cars",300,"ما أسرع سيارة في العالم تقريباً؟","بوغاتي شيرون"),
+        q("cat_cars",600,"من اخترع السيارة؟","كارل بنز"),
+        q("cat_cars",600,"ما معنى اختصار BMW؟","مصانع محركات بافاريا"),
+        q("cat_cars",600,"ما الشركة التي تصنع بورشه؟","بورشه AG"),
+        q("cat_cars",600,"متى اخترعت أول سيارة بمحرك بنزين؟","1885"),
+        q("cat_cars",600,"ما الدولة الأكثر إنتاجاً للسيارات؟","الصين"),
+        q("cat_cars",900,"ما معنى اختصار ABS في السيارات؟","نظام الفرامل المانع للانسداد"),
+        q("cat_cars",900,"ما اسم أول سيارة كهربائية شعبية؟","تيسلا رودستر"),
+        q("cat_cars",900,"كم حصان تملك بوغاتي فيرون؟","1001 حصان"),
+        q("cat_cars",900,"ما اسم أغلى سيارة في التاريخ؟","بوغاتي لا فويتور نوار"),
+        q("cat_cars",900,"في أي عام أُنشئت شركة فيراري؟","1939"),
+
+        # ── الفضاء (Premium) ─────────────────────────────────────────────────
+        q("cat_space",300,"ما أقرب نجم للأرض؟","الشمس"),
+        q("cat_space",300,"كم كوكب في المجموعة الشمسية؟","8"),
+        q("cat_space",300,"ما أكبر كوكب في المجموعة الشمسية؟","المشتري"),
+        q("cat_space",300,"ما اسم أول إنسان في الفضاء؟","يوري غاغارين"),
+        q("cat_space",300,"ما اسم الكوكب الأحمر؟","المريخ"),
+        q("cat_space",600,"كم يبعد القمر عن الأرض تقريباً؟","384,000 كيلومتر"),
+        q("cat_space",600,"ما اسم التلسكوب الفضائي الشهير؟","هابل"),
+        q("cat_space",600,"كم يستغرق الضوء للوصول من الشمس للأرض؟","8 دقائق"),
+        q("cat_space",600,"ما اسم مجرتنا؟","درب التبانة"),
+        q("cat_space",600,"ما أبعد كوكب في المجموعة الشمسية؟","نبتون"),
+        q("cat_space",900,"ما اسم أكبر ثقب أسود مكتشف حتى الآن؟","TON 618"),
+        q("cat_space",900,"كم يبعد أقرب نجم بعد الشمس؟","4.2 سنة ضوئية"),
+        q("cat_space",900,"ما الكوكب الذي يدور بشكل عكسي؟","الزهرة"),
+        q("cat_space",900,"كم عدد النجوم في مجرة درب التبانة تقريباً؟","200-400 مليار نجم"),
+        q("cat_space",900,"ما اسم المهمة الفضائية التي أوصلت أول إنسان للقمر؟","أبولو 11"),
     ]
 
     await db.questions.insert_many(questions)
@@ -1276,13 +1719,19 @@ async def ai_generate_questions(body: dict, admin=Depends(get_admin)):
     diff_map = {"easy": 300, "medium": 600, "hard": 900, "سهل": 300, "متوسط": 600, "صعب": 900}
     difficulty = diff_map.get(str(raw_diff).lower(), None) or (int(raw_diff) if str(raw_diff).isdigit() else 300)
     count = min(int(body.get("count", 10)), 20)
+    prompt_description = (body.get("prompt_description") or "").strip()
 
     cat = await db.categories.find_one({"id": category_id}, {"_id": 0})
     cat_name   = cat.get("name", "عامة") if cat else "عامة"
     diff_label = "سهلة ومباشرة" if difficulty == 300 else ("متوسطة الصعوبة" if difficulty == 600 else "صعبة ومتحدية")
 
+    custom_instruction = ""
+    if prompt_description:
+        custom_instruction = f"\nتعليمات إضافية من المستخدم: {prompt_description}\n"
+
     prompt = (
-        f"أنشئ بالضبط {count} سؤال ترفيهي لفئة \"{cat_name}\" بمستوى ({diff_label}).\n\n"
+        f"أنشئ بالضبط {count} سؤال ترفيهي لفئة \"{cat_name}\" بمستوى ({diff_label}).\n"
+        f"{custom_instruction}\n"
         "شروط أساسية:\n"
         "- اكتب باللغة العربية الفصيحة أو العامية السعودية\n"
         "- الأسئلة حماسية، متنوعة، وغير متكررة\n"

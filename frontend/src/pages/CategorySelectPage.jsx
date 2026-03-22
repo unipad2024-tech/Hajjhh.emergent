@@ -1,256 +1,385 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useGame } from "@/context/GameContext";
 import axios from "axios";
 import { toast } from "sonner";
+import { Lock } from "lucide-react";
+import { useGame } from "@/context/GameContext";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
-const DARK_BG = { background: "radial-gradient(ellipse at top, #3D0810 0%, #1a0205 40%, #0f0102 100%)" };
 
 export default function CategorySelectPage() {
   const navigate = useNavigate();
-  const { session, updateSession, currentUser } = useGame();
+  const { session, updateSession, saveSession, currentUser, darkMode } = useGame();
 
-  const [allCategories, setAllCategories] = useState([]);
-  const [trialData, setTrialData] = useState(null); // {trial_team1_categories, trial_team2_categories, trial_enabled}
-  const [team1Picks, setTeam1Picks] = useState([]);
-  const [team2Picks, setTeam2Picks] = useState([]);
-  const [currentTeam, setCurrentTeam] = useState(1);
-  const [loading, setLoading] = useState(true);
+  const [categories, setCategories]       = useState([]);
+  const [freeData, setFreeData]           = useState(null);
+  const [selected, setSelected]           = useState({ team1: [], team2: [] });
+  const [step, setStep]                   = useState(1);   // 1 = team1, 2 = team2
+  const [loading, setLoading]             = useState(false);
 
-  const isFreeUser = !currentUser || currentUser.subscription_type !== "premium";
+  const isPremiumUser = currentUser?.subscription_type === "premium";
+  const NEEDED = 3;
 
   useEffect(() => {
-    if (!session) { navigate("/"); return; }
+    if (!session) { navigate("/setup"); return; }
+    loadCategories();
+  }, []); // eslint-disable-line
 
-    // Load both all categories and trial settings in parallel
-    Promise.all([
+  const loadCategories = async () => {
+    const [allRes, freeRes] = await Promise.all([
       axios.get(`${API}/categories`),
       axios.get(`${API}/free-categories`),
-    ]).then(([{ data: cats }, { data: trial }]) => {
-      setAllCategories(cats);
-      setTrialData(trial);
+    ]);
+    setCategories(allRes.data);
+    setFreeData(freeRes.data);
 
-      // Free users: auto-assign dynamic trial categories
-      if (isFreeUser) {
-        setTeam1Picks(trial.trial_team1_categories || []);
-        setTeam2Picks(trial.trial_team2_categories || []);
-      }
-      setLoading(false);
-    }).catch(() => {
-      toast.error("خطأ في تحميل الفئات");
-      setLoading(false);
-    });
-  }, [session, navigate]); // eslint-disable-line
-
-  // Free users: start game with dynamic trial categories
-  const startFreeGame = async () => {
-    const t1 = trialData?.trial_team1_categories || [];
-    const t2 = trialData?.trial_team2_categories || [];
-    await updateSession({ team1_categories: t1, team2_categories: t2, status: "playing" });
-    navigate("/game");
+    if (!isPremiumUser) {
+      // Auto-assign trial categories for free users
+      setSelected({
+        team1: freeRes.data.trial_team1_categories || [],
+        team2: freeRes.data.trial_team2_categories || [],
+      });
+    }
   };
 
-  const handlePick = (catId) => {
-    if (currentTeam === 1) {
-      if (team1Picks.includes(catId)) {
-        setTeam1Picks(team1Picks.filter(c => c !== catId));
-      } else if (team1Picks.length < 3) {
-        const newPicks = [...team1Picks, catId];
-        setTeam1Picks(newPicks);
-        if (newPicks.length === 3) toast.success(`✓ ${session.team1_name} اختار 3 فئات`);
-      }
+  const handleCategoryClick = (cat) => {
+    if (cat.is_premium && !isPremiumUser) {
+      toast.error("هذه الفئة متاحة للمشتركين فقط — اشترك في Premium للوصول إليها!", {
+        duration: 3000,
+        icon: "🔒",
+      });
+      return;
+    }
+
+    const team = step === 1 ? "team1" : "team2";
+    const current = selected[team];
+
+    if (current.includes(cat.id)) {
+      // Deselect
+      setSelected(prev => ({ ...prev, [team]: prev[team].filter(id => id !== cat.id) }));
     } else {
-      if (team2Picks.includes(catId)) {
-        setTeam2Picks(team2Picks.filter(c => c !== catId));
-      } else if (team2Picks.length < 3 && !team1Picks.includes(catId)) {
-        const newPicks = [...team2Picks, catId];
-        setTeam2Picks(newPicks);
-        if (newPicks.length === 3) toast.success(`✓ ${session.team2_name} اختار 3 فئات`);
+      if (current.length >= NEEDED) {
+        toast.error(`يمكنك اختيار ${NEEDED} فئات فقط لكل فريق`);
+        return;
       }
+      setSelected(prev => ({ ...prev, [team]: [...prev[team], cat.id] }));
     }
   };
 
-  const handleNext = async () => {
-    if (currentTeam === 1) {
-      if (team1Picks.length < 3) { toast.error("اختر 3 فئات للفريق الأول!"); return; }
-      setCurrentTeam(2);
-    } else {
-      if (team2Picks.length < 3) { toast.error("اختر 3 فئات للفريق الثاني!"); return; }
-      await updateSession({ team1_categories: team1Picks, team2_categories: team2Picks, status: "playing" });
-      navigate("/game");
+  const handleConfirm = async () => {
+    if (!isPremiumUser) {
+      // For free users, go straight to start with auto-assigned trial cats
+      await startGame(selected.team1, selected.team2);
+      return;
+    }
+
+    if (step === 1) {
+      if (selected.team1.length < NEEDED) {
+        toast.error(`اختر ${NEEDED} فئات للفريق الأول`); return;
+      }
+      setStep(2);
+      return;
+    }
+
+    if (selected.team2.length < NEEDED) {
+      toast.error(`اختر ${NEEDED} فئات للفريق الثاني`); return;
+    }
+
+    // Check no overlap
+    const overlap = selected.team1.filter(id => selected.team2.includes(id));
+    if (overlap.length > 0) {
+      toast.error("لا يمكن اختيار نفس الفئة للفريقين!");
+      return;
+    }
+
+    await startGame(selected.team1, selected.team2);
+  };
+
+  const startGame = async (t1Cats, t2Cats) => {
+    setLoading(true);
+    try {
+      const updated = await updateSession({
+        team1_categories: t1Cats,
+        team2_categories: t2Cats,
+      });
+      if (updated) {
+        navigate("/game");
+      }
+    } catch (e) {
+      toast.error("حدث خطأ، حاول مرة أخرى");
+    } finally {
+      setLoading(false);
     }
   };
 
-  if (loading) return (
-    <div className="min-h-screen flex items-center justify-center" style={DARK_BG}>
-      <div className="text-secondary text-2xl animate-pulse">جاري التحميل...</div>
-    </div>
-  );
+  const team1Sel = selected.team1;
+  const team2Sel = selected.team2;
+  const activeSel = step === 1 ? team1Sel : team2Sel;
+  const teamName  = step === 1 ? session?.team1_name : session?.team2_name;
+  const teamColor = step === 1 ? "#ef4444" : "#3b82f6";
 
-  // ── FREE USER VIEW ──
-  if (isFreeUser) {
-    const t1Ids = trialData?.trial_team1_categories || [];
-    const t2Ids = trialData?.trial_team2_categories || [];
-    const allTrialIds = [...new Set([...t1Ids, ...t2Ids])];
-    const freeCats = allCategories.filter(c => allTrialIds.includes(c.id));
+  const bg = darkMode
+    ? "linear-gradient(155deg, #1A2B18 0%, #1C2E1A 35%, #1F3020 70%, #172715 100%)"
+    : "linear-gradient(155deg, #F3EBD3 0%, #E4D9BB 35%, #C7D3A4 70%, #B5C592 100%)";
+  const textMain = darkMode ? "#C7D3A4" : "#2C3A1A";
+  const textSub  = darkMode ? "#8AAA68" : "#5A6A3A";
 
-    if (!trialData?.trial_enabled) {
-      return (
-        <div className="min-h-screen flex flex-col items-center justify-center px-4" style={DARK_BG}>
-          <div className="text-center max-w-md">
-            <h1 className="text-3xl font-black text-secondary mb-4">وضع التجربة مغلق</h1>
-            <p className="text-secondary/70 mb-6">اشترك للوصول الكامل للعبة</p>
-            <button onClick={() => navigate("/pricing")} className="bg-secondary text-primary px-8 py-3 rounded-full font-black hover:scale-105 transition-all">
-              الاشتراك الآن
-            </button>
-          </div>
-        </div>
-      );
-    }
+  const otherTeamSel = step === 1 ? team2Sel : team1Sel;
 
-    return (
-      <div className="min-h-screen px-4 py-8" style={DARK_BG}>
-        <div className="max-w-3xl mx-auto">
-          <div className="text-center mb-6 animate-fade-in-up">
-            <h1 className="text-3xl font-black text-secondary mb-2">الفئات المجانية</h1>
-            <div className="bg-secondary/10 border border-secondary/25 rounded-xl px-4 py-3 max-w-md mx-auto">
-              <p className="text-secondary/80 text-sm">
-                هذه الفئات الثابتة للحساب المجاني.
-                <button onClick={() => navigate("/pricing")} className="text-secondary font-bold underline mr-1 hover:no-underline">
-                  اشترك الحين
-                </button>
-                للوصول لجميع الفئات وأسئلة لا تتكرر.
-              </p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
-            {freeCats.map((cat, i) => {
-              const isT1 = t1Ids.includes(cat.id);
-              return (
-                <div
-                  key={cat.id}
-                  className="relative rounded-2xl overflow-hidden"
-                  style={{ border: `2px solid ${isT1 ? "rgba(239,68,68,0.4)" : "rgba(59,130,246,0.4)"}`, minHeight: "120px", animationDelay: `${0.05 * i}s` }}
-                >
-                  {cat.image_url ? (
-                    <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `url(${cat.image_url})` }} />
-                  ) : (
-                    <div className="absolute inset-0" style={{ background: `linear-gradient(135deg, ${cat.color || "#5B0E14"}, #0f0102)` }} />
-                  )}
-                  <div className="absolute inset-0 bg-black/50" />
-                  <div className="relative z-10 p-4 flex flex-col items-center text-center">
-                    <div className="text-secondary font-black text-base mb-1">{cat.name}</div>
-                    <div className={`text-xs font-bold ${isT1 ? "text-red-300" : "text-blue-300"}`}>
-                      {isT1 ? `🔴 ${session?.team1_name}` : `🔵 ${session?.team2_name}`}
-                    </div>
-                    <div className="mt-1.5 text-secondary/40 text-[10px]">🔒 ثابتة</div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="flex justify-center">
-            <button
-              data-testid="start-free-game-btn"
-              onClick={startFreeGame}
-              className="bg-secondary text-primary px-12 py-4 rounded-full font-black text-xl hover:scale-105 transition-all"
-              style={{ boxShadow: "0 0 30px rgba(241,225,148,0.3)" }}
-            >
-              ابدأ اللعبة! 🎮
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ── PREMIUM USER VIEW ──
-  const picks = currentTeam === 1 ? team1Picks : team2Picks;
-  const teamName = currentTeam === 1 ? session?.team1_name : session?.team2_name;
-  const teamColor = currentTeam === 1 ? "🔴" : "🔵";
+  if (!session) return null;
 
   return (
-    <div className="min-h-screen px-4 py-8" style={DARK_BG}>
-      <div className="max-w-4xl mx-auto">
-        <div className="text-center mb-6 animate-fade-in-up">
-          <div className="text-secondary/60 text-sm mb-2">الخطوة {currentTeam} من 2</div>
-          <h1 className="text-4xl font-black text-secondary">{teamColor} {teamName}</h1>
-          <p className="text-secondary/70 text-lg mt-2">
-            اختر <span className="text-secondary font-black text-xl">{3 - picks.length}</span> فئة
-            {picks.length > 0 && ` (اخترت ${picks.length})`}
+    <div className="min-h-screen flex flex-col" style={{ background: bg }}>
+
+      {/* Header */}
+      <div className="py-4 px-4 text-center border-b" style={{ borderColor: darkMode ? "rgba(120,170,90,0.2)" : "rgba(0,0,0,0.08)" }}>
+        <h1 className="font-black text-3xl" style={{ color: textMain, fontFamily: "Cairo, sans-serif" }}>
+          اختيار الفئات
+        </h1>
+        {!isPremiumUser && freeData?.trial_enabled ? (
+          <p className="mt-1 text-sm font-bold" style={{ color: textSub }}>
+            وضع التجربة — الفئات محددة مسبقاً. اشترك في Premium لاختيار فئاتك!
           </p>
-        </div>
-
-        <div className="flex justify-center gap-2 mb-6">
-          {[1, 2].map(t => (
-            <div key={t} className={`h-3 rounded-full transition-all duration-300 ${t === currentTeam ? "w-8 bg-secondary" : t < currentTeam ? "w-3 bg-secondary/60" : "w-3 bg-secondary/20"}`} />
-          ))}
-        </div>
-
-        {currentTeam === 2 && team1Picks.length > 0 && (
-          <div className="bg-green-900/40 border border-green-500/30 rounded-xl p-3 mb-4 text-center">
-            <span className="text-green-400 text-sm font-bold">
-              ✓ {session?.team1_name}: {team1Picks.map(id => allCategories.find(c => c.id === id)?.name).join(" • ")}
-            </span>
-          </div>
+        ) : (
+          <p className="mt-1 text-sm font-bold" style={{ color: teamColor }}>
+            {teamName} — اختر {NEEDED} فئات ({activeSel.length}/{NEEDED})
+          </p>
         )}
+      </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-8">
-          {allCategories.map((cat, i) => {
-            const isSelected = picks.includes(cat.id);
-            const isOtherTeam = currentTeam === 2 && team1Picks.includes(cat.id);
-            const isDisabled = isOtherTeam && !picks.includes(cat.id);
-
+      {/* Teams progress bar */}
+      {isPremiumUser && (
+        <div className="flex gap-3 px-4 py-3">
+          {[1, 2].map(t => {
+            const tName = t === 1 ? session?.team1_name : session?.team2_name;
+            const tColor = t === 1 ? "#ef4444" : "#3b82f6";
+            const tSel = t === 1 ? team1Sel : team2Sel;
+            const isActive = step === t;
             return (
-              <button
-                key={cat.id}
-                data-testid={`category-${cat.id}`}
-                onClick={() => !isDisabled && handlePick(cat.id)}
-                disabled={isDisabled}
-                className={`
-                  relative rounded-2xl overflow-hidden aspect-video flex flex-col justify-end
-                  border-2 transition-all duration-300
-                  ${isSelected ? "border-secondary scale-105 shadow-[0_0_25px_rgba(241,225,148,0.5)]"
-                    : isDisabled ? "border-primary/10 opacity-30 cursor-not-allowed"
-                    : "border-secondary/20 hover:border-secondary hover:scale-105 cursor-pointer"}
-                `}
-                style={{ animationDelay: `${0.05 * i}s`, minHeight: "100px" }}
+              <div
+                key={t}
+                className="flex-1 rounded-2xl px-4 py-2 flex items-center justify-between transition-all"
+                style={{
+                  background: isActive ? `${tColor}22` : darkMode ? "rgba(0,0,0,0.2)" : "rgba(255,255,255,0.5)",
+                  border: `2px solid ${isActive ? tColor : "transparent"}`,
+                  opacity: step > t ? 0.6 : 1,
+                }}
               >
-                {cat.image_url ? (
-                  <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `url(${cat.image_url})` }} />
-                ) : (
-                  <div className="absolute inset-0" style={{ background: `linear-gradient(135deg, ${cat.color || "#5B0E14"}, #0f0102)` }} />
-                )}
-                <div className={`absolute inset-0 transition-all ${isSelected ? "bg-secondary/40" : "bg-black/50 hover:bg-black/40"}`} />
-                {isSelected && (
-                  <div className="absolute top-2 right-2 bg-secondary text-primary rounded-full w-7 h-7 flex items-center justify-center text-sm font-black z-10">✓</div>
-                )}
-                <div className="relative z-10 p-3 text-center">
-                  <span className={`font-black text-sm leading-tight drop-shadow-lg ${isSelected ? "text-primary" : "text-secondary"}`}>
-                    {cat.name}
-                  </span>
+                <span className="font-black" style={{ color: tColor, fontSize: "0.9rem" }}>{tName}</span>
+                <div className="flex gap-1">
+                  {Array.from({ length: NEEDED }).map((_, i) => (
+                    <div
+                      key={i}
+                      className="w-4 h-4 rounded-full border-2"
+                      style={{
+                        background: i < tSel.length ? tColor : "transparent",
+                        borderColor: tColor,
+                      }}
+                    />
+                  ))}
                 </div>
-              </button>
+              </div>
             );
           })}
         </div>
+      )}
 
-        <div className="flex justify-center">
-          <button
-            data-testid="next-btn"
-            onClick={handleNext}
-            disabled={picks.length < 3}
-            className={`px-12 py-4 rounded-full font-black text-xl transition-all duration-300
-              ${picks.length === 3
-                ? "bg-secondary text-primary hover:scale-105 hover:shadow-[0_0_30px_rgba(241,225,148,0.5)]"
-                : "bg-secondary/20 text-secondary/40 cursor-not-allowed"}`}
-          >
-            {currentTeam === 1 ? "التالي ←" : "ابدأ اللعبة! 🎮"}
-          </button>
+      {/* Category Grid */}
+      <div className="flex-1 px-3 pb-4 overflow-y-auto">
+        <div
+          className="grid gap-3"
+          style={{
+            gridTemplateColumns: "repeat(auto-fill, minmax(clamp(140px, 18vw, 220px), 1fr))",
+          }}
+        >
+          {categories.map(cat => {
+            const isLockedPremium = cat.is_premium && !isPremiumUser;
+            const isSelectedForCurrent = activeSel.includes(cat.id);
+            const isSelectedForOther   = otherTeamSel.includes(cat.id);
+            const isTrialAssignedT1 = !isPremiumUser && freeData?.trial_team1_categories?.includes(cat.id);
+            const isTrialAssignedT2 = !isPremiumUser && freeData?.trial_team2_categories?.includes(cat.id);
+            const isTrialAssigned   = isTrialAssignedT1 || isTrialAssignedT2;
+
+            let ringColor = "transparent";
+            let ringWidth = "0px";
+            if (isSelectedForCurrent) { ringColor = teamColor; ringWidth = "3px"; }
+            else if (isTrialAssignedT1) { ringColor = "#ef4444"; ringWidth = "2.5px"; }
+            else if (isTrialAssignedT2) { ringColor = "#3b82f6"; ringWidth = "2.5px"; }
+
+            return (
+              <div
+                key={cat.id}
+                data-testid={`cat-card-${cat.id}`}
+                onClick={() => {
+                  if (!isPremiumUser) {
+                    if (isLockedPremium) {
+                      toast.error("هذه الفئة متاحة للمشتركين فقط!", { icon: "🔒" });
+                    }
+                    // Free users can't change assignment; just show info
+                    return;
+                  }
+                  if (isSelectedForOther && isPremiumUser) {
+                    toast.error("هذه الفئة مختارة للفريق الآخر"); return;
+                  }
+                  handleCategoryClick(cat);
+                }}
+                className="relative rounded-2xl overflow-hidden cursor-pointer transition-all duration-200 select-none"
+                style={{
+                  border: `${ringWidth} solid ${ringColor}`,
+                  boxShadow: isSelectedForCurrent
+                    ? `0 0 20px ${teamColor}55, 0 4px 12px rgba(0,0,0,0.15)`
+                    : "0 4px 12px rgba(0,0,0,0.1)",
+                  opacity: isLockedPremium ? 0.8 : isSelectedForOther ? 0.5 : 1,
+                  transform: isSelectedForCurrent ? "scale(1.03)" : "scale(1)",
+                  background: darkMode ? "rgba(28,42,26,0.95)" : "rgba(255,255,255,0.92)",
+                  minHeight: "clamp(130px, 20vw, 200px)",
+                }}
+              >
+                {/* Lock overlay for premium */}
+                {isLockedPremium && (
+                  <div
+                    className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-1 rounded-2xl"
+                    style={{ background: "rgba(0,0,0,0.45)", backdropFilter: "blur(2px)" }}
+                  >
+                    <Lock size={28} className="text-yellow-400" />
+                    <span className="text-yellow-300 font-black text-xs text-center px-2">Premium فقط</span>
+                  </div>
+                )}
+
+                {/* Trial assignment badge */}
+                {isTrialAssigned && !isPremiumUser && (
+                  <div
+                    className="absolute top-2 right-2 z-10 px-2 py-0.5 rounded-full text-xs font-black"
+                    style={{
+                      background: isTrialAssignedT1 ? "rgba(239,68,68,0.9)" : "rgba(59,130,246,0.9)",
+                      color: "white",
+                    }}
+                  >
+                    {isTrialAssignedT1 ? session?.team1_name : session?.team2_name}
+                  </div>
+                )}
+
+                {/* Selected check mark */}
+                {isSelectedForCurrent && isPremiumUser && (
+                  <div
+                    className="absolute top-2 left-2 z-10 w-7 h-7 rounded-full flex items-center justify-center font-black text-white text-sm"
+                    style={{ background: teamColor }}
+                  >
+                    ✓
+                  </div>
+                )}
+
+                {/* Premium crown badge */}
+                {cat.is_premium && (
+                  <div
+                    className="absolute top-2 left-2 z-10 px-2 py-0.5 rounded-full text-xs font-black"
+                    style={{ background: "rgba(234,179,8,0.9)", color: "white" }}
+                  >
+                    ⭐ Premium
+                  </div>
+                )}
+
+                {/* Category image */}
+                <div
+                  className="w-full flex items-center justify-center overflow-hidden"
+                  style={{ height: "clamp(90px, 14vw, 150px)" }}
+                >
+                  {cat.image_url ? (
+                    <img
+                      src={cat.image_url}
+                      alt={cat.name}
+                      className="w-full h-full object-cover"
+                      onError={(e) => { e.target.style.display = "none"; }}
+                    />
+                  ) : (
+                    <div
+                      className="w-full h-full flex items-center justify-center"
+                      style={{ background: `linear-gradient(135deg, ${cat.color || "#5B0E14"}33, ${cat.color || "#5B0E14"}11)` }}
+                    >
+                      <span style={{ fontSize: "clamp(2.5rem, 6vw, 4rem)" }}>{cat.icon || "🎯"}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Name */}
+                <div className="px-3 py-2">
+                  <div
+                    className="font-black text-center"
+                    style={{
+                      color: textMain,
+                      fontSize: "clamp(0.8rem, 1.6vw, 1.05rem)",
+                      fontFamily: "Cairo, sans-serif",
+                    }}
+                  >
+                    {cat.icon && <span className="ml-1">{cat.icon}</span>}
+                    {cat.name}
+                  </div>
+                  {cat.description && (
+                    <div
+                      className="text-center mt-0.5 truncate"
+                      style={{ color: textSub, fontSize: "0.7rem" }}
+                    >
+                      {cat.description}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
+      </div>
+
+      {/* Footer */}
+      <div className="shrink-0 px-4 pb-5 pt-3 border-t" style={{ borderColor: darkMode ? "rgba(120,170,90,0.2)" : "rgba(0,0,0,0.08)" }}>
+        {isPremiumUser ? (
+          <div className="flex gap-3">
+            {step === 2 && (
+              <button
+                onClick={() => setStep(1)}
+                className="flex-1 py-3 rounded-2xl font-black text-lg transition-all"
+                style={{
+                  background: darkMode ? "rgba(0,0,0,0.3)" : "rgba(255,255,255,0.7)",
+                  color: textMain,
+                  border: `2px solid ${darkMode ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)"}`,
+                }}
+              >
+                رجوع
+              </button>
+            )}
+            <button
+              data-testid="confirm-categories-btn"
+              onClick={handleConfirm}
+              disabled={loading || activeSel.length < NEEDED}
+              className="flex-1 py-3 rounded-2xl font-black text-lg transition-all hover:scale-105 active:scale-95 disabled:opacity-50"
+              style={{ background: teamColor, color: "white" }}
+            >
+              {loading ? "جاري التحميل..." : step === 1 ? `التالي — ${session?.team2_name} ←` : "ابدأ اللعبة!"}
+            </button>
+          </div>
+        ) : (
+          <button
+            data-testid="confirm-categories-btn"
+            onClick={handleConfirm}
+            disabled={loading}
+            className="w-full py-4 rounded-2xl font-black text-xl transition-all hover:scale-105 active:scale-95 disabled:opacity-50"
+            style={{ background: "linear-gradient(135deg, #5B0E14, #9A1E28)", color: "#F1E194" }}
+          >
+            {loading ? "جاري التحميل..." : "ابدأ اللعبة! 🎮"}
+          </button>
+        )}
+
+        {!isPremiumUser && (
+          <p className="text-center mt-2 text-xs font-bold" style={{ color: textSub }}>
+            <span
+              className="cursor-pointer underline"
+              onClick={() => navigate("/pricing")}
+              style={{ color: "#B8860B" }}
+            >
+              اشترك في Premium
+            </span>
+            {" "}لاختيار فئاتك بحرية والوصول لـ 10 فئات إضافية
+          </p>
+        )}
       </div>
     </div>
   );

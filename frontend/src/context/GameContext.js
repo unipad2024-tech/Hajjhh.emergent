@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
 import axios from "axios";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -19,10 +19,53 @@ export const GameProvider = ({ children }) => {
   const [gameSettings, setGameSettings] = useState({ default_timer: 65, word_timers: { "300": 80, "600": 60, "900": 45 } });
   const [currentTurn, setCurrentTurn] = useState(() => parseInt(localStorage.getItem("hujjah_turn") || "1"));
 
+  // Central game state
+  const [currentQuestion, setCurrentQuestion] = useState(null);
+  const [remainingTime, setRemainingTime] = useState(null);
+  const [selectedQuestions, setSelectedQuestions] = useState(() => {
+    // Load selected tiles from localStorage if session exists
+    try {
+      const s = JSON.parse(localStorage.getItem("hujjah_session") || "null");
+      if (s?.id) {
+        const raw = localStorage.getItem(`used_${s.id}`);
+        return raw ? new Set(JSON.parse(raw)) : new Set();
+      }
+    } catch {}
+    return new Set();
+  });
+  const [teamScores, setTeamScores] = useState(() => {
+    try {
+      const s = JSON.parse(localStorage.getItem("hujjah_session") || "null");
+      return { team1: s?.team1_score ?? 0, team2: s?.team2_score ?? 0 };
+    } catch { return { team1: 0, team2: 0 }; }
+  });
+
   // Load settings on mount
   useEffect(() => {
     axios.get(`${API}/settings`).then(({ data }) => setGameSettings(data)).catch(() => {});
   }, []);
+
+  // Sync teamScores when session changes
+  useEffect(() => {
+    if (session) {
+      setTeamScores({ team1: session.team1_score ?? 0, team2: session.team2_score ?? 0 });
+    }
+  }, [session]);
+
+  const markTileUsed = useCallback((tileKey) => {
+    setSelectedQuestions(prev => {
+      const next = new Set(prev);
+      next.add(tileKey);
+      if (session?.id) {
+        localStorage.setItem(`used_${session.id}`, JSON.stringify([...next]));
+      }
+      return next;
+    });
+  }, [session]);
+
+  const isTileUsed = useCallback((tileKey) => {
+    return selectedQuestions.has(tileKey);
+  }, [selectedQuestions]);
 
   const toggleDarkMode = () => {
     const next = !darkMode;
@@ -43,8 +86,12 @@ export const GameProvider = ({ children }) => {
 
   const saveSession = (s) => {
     setSession(s);
-    if (s) localStorage.setItem("hujjah_session", JSON.stringify(s));
-    else localStorage.removeItem("hujjah_session");
+    if (s) {
+      localStorage.setItem("hujjah_session", JSON.stringify(s));
+      setTeamScores({ team1: s.team1_score ?? 0, team2: s.team2_score ?? 0 });
+    } else {
+      localStorage.removeItem("hujjah_session");
+    }
   };
 
   const loginUser = async (email, password) => {
@@ -89,6 +136,7 @@ export const GameProvider = ({ children }) => {
       const headers = userToken ? { Authorization: `Bearer ${userToken}` } : {};
       const { data } = await axios.post(`${API}/game/session`, payload, { headers });
       saveSession(data);
+      setSelectedQuestions(new Set());
       return data;
     } finally {
       setLoading(false);
@@ -115,6 +163,7 @@ export const GameProvider = ({ children }) => {
         {},
         { headers }
       );
+      setCurrentQuestion(data);
       return data;
     } catch (e) {
       console.error("Get question error", e);
@@ -126,18 +175,31 @@ export const GameProvider = ({ children }) => {
     if (!session?.id) return;
     try {
       const { data } = await axios.post(`${API}/game/session/${session.id}/score`, { team, points });
-      saveSession({ ...session, team1_score: data.team1_score, team2_score: data.team2_score });
+      const updated = { ...session, team1_score: data.team1_score, team2_score: data.team2_score };
+      saveSession(updated);
+      setTeamScores({ team1: data.team1_score, team2: data.team2_score });
       return data;
     } catch (e) {
       console.error("Score update error", e);
     }
   };
 
-  const resetGame = () => { saveSession(null); resetTurn(); };
+  const resetGame = () => {
+    saveSession(null);
+    resetTurn();
+    setCurrentQuestion(null);
+    setRemainingTime(null);
+    setSelectedQuestions(new Set());
+    setTeamScores({ team1: 0, team2: 0 });
+  };
 
   return (
     <GameContext.Provider value={{
       session, loading, currentUser, userToken, darkMode, gameSettings, currentTurn,
+      currentQuestion, setCurrentQuestion,
+      remainingTime, setRemainingTime,
+      selectedQuestions, markTileUsed, isTileUsed,
+      teamScores,
       createSession, updateSession, getNextQuestion, updateScore,
       resetGame, saveSession, loginUser, registerUser, logoutUser, refreshUser,
       toggleDarkMode, switchTurn, resetTurn

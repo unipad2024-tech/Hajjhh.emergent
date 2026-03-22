@@ -99,7 +99,7 @@ function ScoreBtn({ catId, diff, slot, used, clicking, onClick, dark }) {
         background: used ? (dark ? "rgba(100,120,80,0.2)" : "#d1c9b5") : (dark ? ds.darkBg : ds.bg),
         boxShadow: used ? "none" : `0 5px 14px ${ds.shadow}, 0 2px 6px rgba(0,0,0,0.2)`,
         padding: "clamp(8px,1.5vh,18px) clamp(4px,0.8vw,10px)",
-        fontSize: "clamp(1.4rem, 3.2vw, 2.8rem)",
+        fontSize: "clamp(1.6rem, 3.8vw, 3.5rem)",
         color: used ? (dark ? "rgba(140,160,100,0.35)" : "rgba(80,80,60,0.35)") : "white",
         letterSpacing: "-0.02em",
         lineHeight: 1,
@@ -112,7 +112,7 @@ function ScoreBtn({ catId, diff, slot, used, clicking, onClick, dark }) {
 }
 
 /* ── Category Card ── */
-function CategoryCard({ cat, session, usedTiles, clickingTile, onTileClick, dark }) {
+function CategoryCard({ cat, session, isTileUsed, clickingTile, onTileClick, dark }) {
   const P = dark ? DARK : LIGHT;
   const t1Cats   = session?.team1_categories || [];
   const isT1     = t1Cats.includes(cat.id);
@@ -142,7 +142,7 @@ function CategoryCard({ cat, session, usedTiles, clickingTile, onTileClick, dark
             <ScoreBtn
               key={`${cat.id}_${diff}_1`}
               catId={cat.id} diff={diff} slot={1}
-              used={usedTiles.has(`${cat.id}_${diff}_1`)}
+              used={isTileUsed(`${cat.id}_${diff}_1`)}
               clicking={clickingTile}
               onClick={() => onTileClick(cat.id, diff, 1)}
               dark={dark}
@@ -202,7 +202,7 @@ function CategoryCard({ cat, session, usedTiles, clickingTile, onTileClick, dark
             <ScoreBtn
               key={`${cat.id}_${diff}_2`}
               catId={cat.id} diff={diff} slot={2}
-              used={usedTiles.has(`${cat.id}_${diff}_2`)}
+              used={isTileUsed(`${cat.id}_${diff}_2`)}
               clicking={clickingTile}
               onClick={() => onTileClick(cat.id, diff, 2)}
               dark={dark}
@@ -217,11 +217,12 @@ function CategoryCard({ cat, session, usedTiles, clickingTile, onTileClick, dark
 /* ═══════════════════════════════════════════════ Main Board ═══ */
 export default function GameBoardPage() {
   const navigate = useNavigate();
-  const { session, resetGame, darkMode, toggleDarkMode, currentTurn, switchTurn } = useGame();
-  const [categories, setCategories]     = useState([]);
-  const [usedTiles, setUsedTiles]       = useState(new Set());
-  const [loading, setLoading]           = useState(true);
-  const [scores, setScores]             = useState({ team1: 0, team2: 0 });
+  const {
+    session, resetGame, darkMode, toggleDarkMode, currentTurn, switchTurn,
+    markTileUsed, isTileUsed, selectedQuestions, teamScores, saveSession
+  } = useGame();
+  const [categories, setCategories]         = useState([]);
+  const [loading, setLoading]               = useState(true);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [showWinner, setShowWinner]         = useState(false);
   const [clickingTile, setClickingTile]     = useState(null);
@@ -235,8 +236,7 @@ export default function GameBoardPage() {
 
   useEffect(() => {
     if (!session) return;
-    setScores({ team1: session.team1_score || 0, team2: session.team2_score || 0 });
-    setUsedTiles(new Set(JSON.parse(localStorage.getItem(`used_${session.id}`) || "[]")));
+    // selectedQuestions and teamScores are managed by GameContext
   }, [session]);
 
   const loadBoard = async () => {
@@ -250,9 +250,9 @@ export default function GameBoardPage() {
     if (!session?.id) return;
     try {
       const { data } = await axios.get(`${API}/game/session/${session.id}`);
-      setScores({ team1: data.team1_score || 0, team2: data.team2_score || 0 });
+      saveSession({ ...session, team1_score: data.team1_score, team2_score: data.team2_score });
     } catch {}
-  }, [session]);
+  }, [session, saveSession]);
 
   useEffect(() => { const iv = setInterval(refreshScores, 4000); return () => clearInterval(iv); }, [refreshScores]);
   useEffect(() => {
@@ -263,15 +263,14 @@ export default function GameBoardPage() {
 
   const handleTileClick = async (catId, difficulty, slot) => {
     const key = `${catId}_${difficulty}_${slot}`;
-    if (usedTiles.has(key) || clickingTile) return;
+    if (isTileUsed(key) || clickingTile) return;
     setClickingTile(key);
+    // Mark tile immediately to prevent race conditions
+    markTileUsed(key);
     try {
       const { data: q } = await axios.post(
         `${API}/game/session/${session.id}/question?category_id=${catId}&difficulty=${difficulty}`
       );
-      const newUsed = new Set([...usedTiles, key]);
-      setUsedTiles(newUsed);
-      localStorage.setItem(`used_${session.id}`, JSON.stringify([...newUsed]));
       navigate("/question", {
         state: { question: q, catId, difficulty, slot, catName: categories.find(c => c.id === catId)?.name, turnTeam: currentTurn }
       });
@@ -291,11 +290,11 @@ export default function GameBoardPage() {
   );
 
   const allUsed = categories.every(c =>
-    DIFFICULTIES.every(d => usedTiles.has(`${c.id}_${d}_1`) && usedTiles.has(`${c.id}_${d}_2`))
+    DIFFICULTIES.every(d => isTileUsed(`${c.id}_${d}_1`) && isTileUsed(`${c.id}_${d}_2`))
   );
   const winner = allUsed || showWinner
-    ? scores.team1 > scores.team2 ? session?.team1_name
-    : scores.team2 > scores.team1 ? session?.team2_name : "تعادل"
+    ? teamScores.team1 > teamScores.team2 ? session?.team1_name
+    : teamScores.team2 > teamScores.team1 ? session?.team2_name : "تعادل"
     : null;
 
   return (
@@ -330,7 +329,7 @@ export default function GameBoardPage() {
               className="font-black tabular-nums leading-none"
               style={{ fontSize: "clamp(2rem, 4.5vw, 3.8rem)", color: "#F1E194" }}
             >
-              <ScoreCounter value={scores.team1} dark={darkMode} />
+              <ScoreCounter value={teamScores.team1} dark={darkMode} />
             </span>
           </div>
 
@@ -349,16 +348,19 @@ export default function GameBoardPage() {
               data-testid="turn-indicator"
               className="flex items-center gap-2 rounded-xl font-black transition-all duration-500 text-center"
               style={{
-                background:   currentTurn === 1 ? "rgba(239,68,68,0.25)" : "rgba(59,130,246,0.25)",
-                border:       `2.5px solid ${currentTurn === 1 ? "rgba(239,68,68,0.8)" : "rgba(59,130,246,0.8)"}`,
+                background:   currentTurn === 1 ? "rgba(239,68,68,0.30)" : "rgba(59,130,246,0.30)",
+                border:       `2.5px solid ${currentTurn === 1 ? "rgba(239,68,68,0.9)" : "rgba(59,130,246,0.9)"}`,
                 color:        currentTurn === 1 ? "#fca5a5" : "#93c5fd",
-                fontSize:     "clamp(0.75rem, 1.8vw, 1.2rem)",
-                padding:      "clamp(4px,0.7vh,10px) clamp(10px,1.5vw,20px)",
-                boxShadow:    currentTurn === 1 ? "0 0 18px rgba(239,68,68,0.4)" : "0 0 18px rgba(59,130,246,0.4)",
+                fontSize:     "clamp(0.8rem, 2vw, 1.3rem)",
+                padding:      "clamp(5px,0.9vh,12px) clamp(12px,1.8vw,24px)",
+                boxShadow:    currentTurn === 1
+                  ? "0 0 24px rgba(239,68,68,0.6), 0 0 50px rgba(239,68,68,0.2)"
+                  : "0 0 24px rgba(59,130,246,0.6), 0 0 50px rgba(59,130,246,0.2)",
                 whiteSpace:   "nowrap",
+                animation:    "pulse 1.8s ease-in-out infinite",
               }}
             >
-              <span style={{ fontSize: "clamp(0.9rem, 1.6vw, 1.2rem)" }}>{currentTurn === 1 ? "🔴" : "🔵"}</span>
+              <span style={{ fontSize: "clamp(1rem, 1.8vw, 1.4rem)" }}>{currentTurn === 1 ? "🔴" : "🔵"}</span>
               <span>دور {currentTurn === 1 ? session?.team1_name : session?.team2_name}</span>
             </div>
 
@@ -418,7 +420,7 @@ export default function GameBoardPage() {
               className="font-black tabular-nums leading-none"
               style={{ fontSize: "clamp(2rem, 4.5vw, 3.8rem)", color: "#F1E194" }}
             >
-              <ScoreCounter value={scores.team2} dark={darkMode} />
+              <ScoreCounter value={teamScores.team2} dark={darkMode} />
             </span>
           </div>
 
@@ -441,7 +443,7 @@ export default function GameBoardPage() {
             key={cat.id}
             cat={cat}
             session={session}
-            usedTiles={usedTiles}
+            isTileUsed={isTileUsed}
             clickingTile={clickingTile}
             onTileClick={handleTileClick}
             dark={darkMode}
