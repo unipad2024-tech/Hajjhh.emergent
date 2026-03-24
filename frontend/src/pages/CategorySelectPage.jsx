@@ -188,9 +188,9 @@ export default function CategorySelectPage() {
       {/* Category Grid */}
       <div className="flex-1 px-3 pb-4 overflow-y-auto">
         <div
-          className="grid gap-3"
+          className="grid gap-4"
           style={{
-            gridTemplateColumns: "repeat(auto-fill, minmax(clamp(140px, 18vw, 220px), 1fr))",
+            gridTemplateColumns: "repeat(auto-fill, minmax(clamp(160px, 20vw, 240px), 1fr))",
           }}
         >
           {categories.map(cat => {
@@ -233,7 +233,7 @@ export default function CategorySelectPage() {
                   opacity: isLockedPremium ? 0.8 : isSelectedForOther ? 0.5 : 1,
                   transform: isSelectedForCurrent ? "scale(1.03)" : "scale(1)",
                   background: darkMode ? "rgba(28,42,26,0.95)" : "rgba(255,255,255,0.92)",
-                  minHeight: "clamp(130px, 20vw, 200px)",
+                minHeight: "clamp(160px, 24vw, 240px)",
                 }}
               >
                 {/* Lock overlay for premium */}
@@ -283,7 +283,7 @@ export default function CategorySelectPage() {
                 {/* Category image */}
                 <div
                   className="w-full flex items-center justify-center overflow-hidden"
-                  style={{ height: "clamp(90px, 14vw, 150px)" }}
+                  style={{ height: "clamp(110px, 18vw, 180px)" }}
                 >
                   {cat.image_url ? (
                     <img
@@ -297,18 +297,18 @@ export default function CategorySelectPage() {
                       className="w-full h-full flex items-center justify-center"
                       style={{ background: `linear-gradient(135deg, ${cat.color || "#5B0E14"}33, ${cat.color || "#5B0E14"}11)` }}
                     >
-                      <span style={{ fontSize: "clamp(2.5rem, 6vw, 4rem)" }}>{cat.icon || "🎯"}</span>
+                      <span style={{ fontSize: "clamp(3rem, 7vw, 5rem)" }}>{cat.icon || "🎯"}</span>
                     </div>
                   )}
                 </div>
 
                 {/* Name */}
-                <div className="px-3 py-2">
+                <div className="px-3 py-2.5">
                   <div
                     className="font-black text-center"
                     style={{
                       color: textMain,
-                      fontSize: "clamp(0.8rem, 1.6vw, 1.05rem)",
+                      fontSize: "clamp(0.9rem, 1.8vw, 1.15rem)",
                       fontFamily: "Cairo, sans-serif",
                     }}
                   >

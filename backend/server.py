@@ -78,6 +78,7 @@ class Category(BaseModel):
     image_url: str = ""
     is_special: bool = False
     is_premium: bool = False
+    is_active: bool = True
     color: str = "#5B0E14"
     order: int = 0
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -89,6 +90,7 @@ class CategoryCreate(BaseModel):
     image_url: str = ""
     is_special: bool = False
     is_premium: bool = False
+    is_active: bool = True
     color: str = "#5B0E14"
     order: int = 0
 
@@ -348,11 +350,13 @@ async def admin_payments(_: bool = Depends(get_admin)):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @api_router.get("/categories")
-async def get_categories():
+async def get_categories(show_inactive: bool = False):
     cats = await db.categories.find({}, {"_id": 0}).sort("order", 1).to_list(100)
-    # Ensure is_premium defaults to False for legacy documents
     for c in cats:
         c.setdefault("is_premium", False)
+        c.setdefault("is_active", True)
+    if not show_inactive:
+        cats = [c for c in cats if c.get("is_active", True)]
     return cats
 
 @api_router.get("/free-categories")
@@ -680,6 +684,7 @@ async def stripe_webhook(request: Request):
 # ══════════════════════════════════════════════════════════════════════════════
 
 PAYMENT_PUBLIC_KEY  = os.environ.get("PAYMENT_PUBLIC_KEY", "")
+PAYMENT_SECRET_KEY  = os.environ.get("PAYMENT_SECRET_KEY", "")  # backend-only, never exposed to frontend
 PAYMENT_SECRET_KEY  = os.environ.get("PAYMENT_SECRET_KEY", "")
 
 @api_router.get("/payment/config")
@@ -1787,6 +1792,155 @@ async def ai_save_questions(body: dict, admin=Depends(get_admin)):
 @api_router.get("/")
 async def root():
     return {"message": "Hujjah API v2 – حُجّة", "version": "2.0"}
+
+@api_router.post("/admin/seed-letter-categories")
+async def seed_letter_categories(_: bool = Depends(get_admin)):
+    """Add 3 new letter/word-based categories and their questions."""
+    new_cats = [
+        {
+            "id": "cat_proverbs",
+            "name": "أمثال شعبية",
+            "description": "أكمل الأمثال الشعبية السعودية والعربية",
+            "icon": "📜",
+            "image_url": "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=600&q=80",
+            "is_special": False,
+            "is_premium": False,
+            "is_active": True,
+            "color": "#1e3a5f",
+            "order": 21,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+        {
+            "id": "cat_letters",
+            "name": "حرف وكلمة",
+            "description": "ألعاب الحروف والكلمات",
+            "icon": "🔤",
+            "image_url": "https://images.unsplash.com/photo-1546410531-bb4caa6b424d?w=600&q=80",
+            "is_special": False,
+            "is_premium": False,
+            "is_active": True,
+            "color": "#14532d",
+            "order": 22,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+        {
+            "id": "cat_whois",
+            "name": "من أنا؟",
+            "description": "خمّن من يصفه الوصف",
+            "icon": "❓",
+            "image_url": "https://images.unsplash.com/photo-1553481187-be93c21490a9?w=600&q=80",
+            "is_special": False,
+            "is_premium": False,
+            "is_active": True,
+            "color": "#4c1d95",
+            "order": 23,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+    ]
+
+    # Questions for أمثال شعبية
+    proverb_questions = [
+        # 300
+        {"id": str(uuid.uuid4()), "category_id": "cat_proverbs", "difficulty": 300, "text": "اكمل المثل: الحر تكفيه...", "answer": "الإشارة", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_proverbs", "difficulty": 300, "text": "اكمل المثل: من جدّ...", "answer": "وجد", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_proverbs", "difficulty": 300, "text": "اكمل المثل: القناعة...", "answer": "كنز لا يفنى", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_proverbs", "difficulty": 300, "text": "اكمل المثل: من صبر...", "answer": "ظفر", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_proverbs", "difficulty": 300, "text": "اكمل المثل: يد واحدة لا...", "answer": "تصفق", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_proverbs", "difficulty": 300, "text": "اكمل المثل: الكذب...", "answer": "مفتاح كل شر", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_proverbs", "difficulty": 300, "text": "اكمل المثل: خير الكلام...", "answer": "ما قلّ ودل", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        # 600
+        {"id": str(uuid.uuid4()), "category_id": "cat_proverbs", "difficulty": 600, "text": "اكمل المثل: من حفر حفرة...", "answer": "وقع فيها", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_proverbs", "difficulty": 600, "text": "اكمل المثل: الغائب حجته...", "answer": "معه", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_proverbs", "difficulty": 600, "text": "اكمل المثل: ما خاب من...", "answer": "استشار", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_proverbs", "difficulty": 600, "text": "اكمل المثل: اطلب العلم من...", "answer": "المهد إلى اللحد", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_proverbs", "difficulty": 600, "text": "اكمل المثل: العين لا تعلو على...", "answer": "الحاجب", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_proverbs", "difficulty": 600, "text": "اكمل المثل: العلم في الصغر...", "answer": "كالنقش على الحجر", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_proverbs", "difficulty": 600, "text": "اكمل المثل: أعطِ الخبز لخبّازه...", "answer": "ولو أكل نصه", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        # 900
+        {"id": str(uuid.uuid4()), "category_id": "cat_proverbs", "difficulty": 900, "text": "اكمل المثل: التدبير نصف...", "answer": "المعيشة", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_proverbs", "difficulty": 900, "text": "اكمل المثل: الوقت كالسيف...", "answer": "إن لم تقطعه قطعك", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_proverbs", "difficulty": 900, "text": "اكمل المثل: شبل من أسد يجري...", "answer": "في جحر الحيات", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_proverbs", "difficulty": 900, "text": "اكمل المثل: إذا أردت أن تُطاع...", "answer": "فاطلب المستطاع", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_proverbs", "difficulty": 900, "text": "اكمل المثل: رُبّ كلمة قالت...", "answer": "لصاحبها دعي", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_proverbs", "difficulty": 900, "text": "اكمل المثل: جار قريب خير من...", "answer": "أخ بعيد", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+    ]
+
+    # Questions for حرف وكلمة
+    letters_questions = [
+        # 300
+        {"id": str(uuid.uuid4()), "category_id": "cat_letters", "difficulty": 300, "text": "أكمل الكلمة: ك_تاب (حرف واحد ناقص)", "answer": "كتاب", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_letters", "difficulty": 300, "text": "ما الحيوان الذي يبدأ بحرف الأسد؟", "answer": "أسد", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_letters", "difficulty": 300, "text": "أكمل: الشمس تشرق من الـ...", "answer": "شرق", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_letters", "difficulty": 300, "text": "ما الكلمة الناقصة: _لاح (آلة زراعية)", "answer": "فلاح", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_letters", "difficulty": 300, "text": "كلمة من 3 حروف تعني الماء في الصحراء تبدأ بـ و", "answer": "واحة", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_letters", "difficulty": 300, "text": "أكمل: الريـ__  تهب من الشمال", "answer": "الريح", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_letters", "difficulty": 300, "text": "ما الحرف الناقص: م_دينة", "answer": "مدينة (الحرف دال)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        # 600
+        {"id": str(uuid.uuid4()), "category_id": "cat_letters", "difficulty": 600, "text": "رتب هذه الحروف لتكوّن دولة عربية: ر - ص - م", "answer": "مصر", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_letters", "difficulty": 600, "text": "أكمل: ___________ الرياض عاصمة المملكة (كلمة تنتهي بـ ن)", "answer": "إن", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_letters", "difficulty": 600, "text": "رتب هذه الحروف لتكوّن فاكهة: ن - م - و - ل - ي", "answer": "ليمون", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_letters", "difficulty": 600, "text": "أكمل الكلمة بإضافة حرف واحد: ق_مر (يضيء في الليل)", "answer": "قمر", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_letters", "difficulty": 600, "text": "ما الكلمة التي تقرأ من اليمين واليسار بنفس الطريقة وتعني سيارة أطفال؟", "answer": "كوكو (متناظرة)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_letters", "difficulty": 600, "text": "رتب الحروف لتكوّن مدينة سعودية: ة - ك - م - م", "answer": "مكة", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_letters", "difficulty": 600, "text": "أزل حرفاً واحداً من كلمة 'سماء' لتحصل على لون", "answer": "سما → سما، أزل الألف: سم (سم؟) لا، أزل السين: ماء أو أزل الميم: ساء — الإجابة: سماء → سما → (أزل الواو أو...) رسالة: الجواب 'ساء'", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        # 900
+        {"id": str(uuid.uuid4()), "category_id": "cat_letters", "difficulty": 900, "text": "ما الكلمة التي إذا قلبت حروفها تصبح ضدها: 'جبن' ← ضدها؟", "answer": "نجب (من النجابة والشجاعة)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_letters", "difficulty": 900, "text": "رتب الحروف لتكوّن اسم نبي: س - ي - ع - م - ل - إ", "answer": "إسماعيل", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_letters", "difficulty": 900, "text": "ما الكلمة العربية الوحيدة التي تنتهي بـ 'وق'؟ (نوع من الطيور)", "answer": "طاووق / تاووق", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_letters", "difficulty": 900, "text": "أضف حرفاً لكلمة 'بر' لتصبح مكاناً لصلاة المسلمين", "answer": "مبر → محراب أو: 'بر' + ح = برح... الإجابة: مبرة أو أضف 'ج' = برج", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_letters", "difficulty": 900, "text": "ما الحرف الذي يتكرر 3 مرات في كلمة 'موز' بعد تضعيفه؟", "answer": "المضعف: مووز — الحرف الواو", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_letters", "difficulty": 900, "text": "رتب الحروف: ن-د-أ-ع-ا لتكوّن دولة عربية", "answer": "عدنان — أو: الأردن؟ لا... الإجابة: 'عدنان' (اسم) أو إعادة: أ-ع-د-ن-ا = إعادة → الأردن ليس هنا. الإجابة الصحيحة: نادعا = ندع أو عدنا", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+    ]
+
+    # Questions for من أنا؟
+    whois_questions = [
+        # 300
+        {"id": str(uuid.uuid4()), "category_id": "cat_whois", "difficulty": 300, "text": "من أنا؟ أنا أكبر مدينة في المملكة العربية السعودية وعاصمتها", "answer": "الرياض", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_whois", "difficulty": 300, "text": "من أنا؟ أنا أطول جبل في العالم وأتواجد في منطقة الهيمالايا", "answer": "جبل إيفرست", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_whois", "difficulty": 300, "text": "من أنا؟ أنا الفاكهة الصفراء التي تنمو في المناطق الحارة وأعرف بـ'الذهب الأصفر'", "answer": "الموز", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_whois", "difficulty": 300, "text": "من أنا؟ أنا أهم حدث رياضي في العالم يُقام كل 4 سنوات لكرة القدم", "answer": "كأس العالم", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_whois", "difficulty": 300, "text": "من أنا؟ أنا النجم الأكثر لمعاناً في سماء النهار", "answer": "الشمس", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_whois", "difficulty": 300, "text": "من أنا؟ أنا الحيوان الذي يُعرف بـ'سفينة الصحراء'", "answer": "الجمل", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_whois", "difficulty": 300, "text": "من أنا؟ أنا المبنى الذي تلتف حوله الكعبة المشرفة وهو مركز الحج", "answer": "المسجد الحرام", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        # 600
+        {"id": str(uuid.uuid4()), "category_id": "cat_whois", "difficulty": 600, "text": "من أنا؟ أنا نهر أفريقي يمر بمصر وأطول أنهار العالم", "answer": "نهر النيل", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_whois", "difficulty": 600, "text": "من أنا؟ أنا عالم سعودي ولد في الطائف وكُنت أول رائد فضاء عربي", "answer": "الأمير سلطان بن سلمان", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_whois", "difficulty": 600, "text": "من أنا؟ أنا الشيء الذي يُقال 'ماء النار' وهو مادة قابلة للاشتعال", "answer": "الكحول / الإيثانول", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_whois", "difficulty": 600, "text": "من أنا؟ أنا مدينة سعودية تُعرف بـ'العروس' وتقع على البحر الأحمر", "answer": "جدة", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_whois", "difficulty": 600, "text": "من أنا؟ أنا الطائر الذي يرمز للسلام وهو أبيض اللون", "answer": "الحمامة", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_whois", "difficulty": 600, "text": "من أنا؟ أنا الرياضي السعودي اللاعب في نادي الهلال والفائز بجائزة أفضل لاعب", "answer": "محمد الدعيع (أو حسب السياق: سالم الدوسري)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_whois", "difficulty": 600, "text": "من أنا؟ أنا لغة البرمجة التي سُميت على اسم ثعبان", "answer": "Python (بايثون)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        # 900
+        {"id": str(uuid.uuid4()), "category_id": "cat_whois", "difficulty": 900, "text": "من أنا؟ أنا العالم المسلم الأندلسي الذي وضع أسس الجراحة في القرن العاشر الميلادي", "answer": "الزهراوي (أبو القاسم الزهراوي)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_whois", "difficulty": 900, "text": "من أنا؟ أنا المدينة السعودية التي تقع في جوف المملكة وتُعرف بآثارها النبطية وهي من التراث العالمي", "answer": "العُلا (مدائن صالح)", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_whois", "difficulty": 900, "text": "من أنا؟ أنا البروتين الذي يعطي الجلد والشعر لونهما وأُنتج بفعل الشمس", "answer": "الميلانين", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_whois", "difficulty": 900, "text": "من أنا؟ أنا أول مسلسل سعودي حاز على جوائز دولية وعُرض على منصة عالمية في 2023", "answer": "مداح الظلام / بالنسبة لمسلسلات 2023", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_whois", "difficulty": 900, "text": "من أنا؟ أنا أكبر منشأة رياضية في العالم العربي وافتُتحت في السعودية عام 2022", "answer": "استاد الملك فهد الدولي", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+        {"id": str(uuid.uuid4()), "category_id": "cat_whois", "difficulty": 900, "text": "من أنا؟ أنا المبادرة السعودية التي تهدف لزراعة 10 مليار شجرة بحلول 2030", "answer": "مبادرة السعودية الخضراء", "image_url": "", "answer_image_url": "", "question_type": "text", "created_at": datetime.now(timezone.utc).isoformat()},
+    ]
+
+    all_questions = proverb_questions + letters_questions + whois_questions
+    added_cats = 0
+    added_qs = 0
+
+    for cat in new_cats:
+        existing = await db.categories.find_one({"id": cat["id"]})
+        if not existing:
+            await db.categories.insert_one(cat)
+            added_cats += 1
+
+    for q in all_questions:
+        existing = await db.questions.find_one({"text": q["text"], "category_id": q["category_id"]})
+        if not existing:
+            await db.questions.insert_one(q)
+            added_qs += 1
+
+    return {
+        "status": "done",
+        "categories_added": added_cats,
+        "questions_added": added_qs,
+        "total_questions": len(all_questions),
+    }
 
 app.include_router(api_router)
 app.add_middleware(

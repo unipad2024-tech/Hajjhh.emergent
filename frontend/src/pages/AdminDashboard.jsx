@@ -53,7 +53,7 @@ export default function AdminDashboard() {
   const [aiSaving, setAiSaving] = useState(false);
 
   // New category form
-  const [catForm, setCatForm] = useState({ name: "", icon: "", description: "", is_special: false, is_premium: false, color: "#5B0E14", image_url: "" });
+  const [catForm, setCatForm] = useState({ name: "", icon: "", description: "", is_special: false, is_premium: false, is_active: true, color: "#5B0E14", image_url: "" });
   const [showCatForm, setShowCatForm] = useState(false);
   const [editingCat, setEditingCat] = useState(null);
 
@@ -74,7 +74,7 @@ export default function AdminDashboard() {
 
   const loadData = useCallback(async () => {
     const [catsRes, qsRes] = await Promise.all([
-      axios.get(`${API}/categories`),
+      axios.get(`${API}/categories?show_inactive=true`),
       axios.get(`${API}/questions`),
     ]);
     setCategories(catsRes.data);
@@ -207,14 +207,14 @@ export default function AdminDashboard() {
       }
       setShowCatForm(false);
       setEditingCat(null);
-      setCatForm({ name: "", icon: "", description: "", is_special: false, color: "#5B0E14", image_url: "" });
+      setCatForm({ name: "", icon: "", description: "", is_special: false, is_premium: false, is_active: true, color: "#5B0E14", image_url: "" });
       loadData();
     } catch { toast.error("خطأ"); }
   };
 
   const handleEditCat = (cat) => {
     setEditingCat(cat);
-    setCatForm({ name: cat.name, icon: cat.icon || "", description: cat.description || "", is_special: cat.is_special || false, is_premium: cat.is_premium || false, color: cat.color || "#5B0E14", image_url: cat.image_url || "" });
+    setCatForm({ name: cat.name, icon: cat.icon || "", description: cat.description || "", is_special: cat.is_special || false, is_premium: cat.is_premium || false, is_active: cat.is_active !== false, color: cat.color || "#5B0E14", image_url: cat.image_url || "" });
     setShowCatForm(true);
   };
 
@@ -388,11 +388,14 @@ export default function AdminDashboard() {
                 <div
                   key={cat.id}
                   className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition-all ${selectedCat === cat.id ? "bg-primary text-secondary" : "hover:bg-primary/10"}`}
+                  style={{ opacity: cat.is_active === false ? 0.45 : 1 }}
                   onClick={() => setSelectedCat(cat.id)}
                 >
                   <div className="flex items-center gap-2">
                     <span>{cat.icon || CATEGORY_ICONS[cat.id] || "🎯"}</span>
                     <span className="text-sm font-bold truncate">{cat.name}</span>
+                    {cat.is_premium && <span className="text-yellow-500 text-xs">⭐</span>}
+                    {cat.is_active === false && <span className="text-red-400 text-xs">●</span>}
                   </div>
                   <button
                     data-testid={`edit-cat-${cat.id}`}
@@ -1372,6 +1375,16 @@ export default function AdminDashboard() {
                   className="w-4 h-4"
                 />
                 <span className="text-sm font-bold text-yellow-700">⭐ فئة Premium (مقفولة للمجانيين)</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  data-testid="cat-active-toggle"
+                  type="checkbox"
+                  checked={catForm.is_active !== false}
+                  onChange={(e) => setCatForm({ ...catForm, is_active: e.target.checked })}
+                  className="w-4 h-4"
+                />
+                <span className="text-sm font-bold text-green-700">✓ فئة مفعّلة (تظهر في اللعبة)</span>
               </label>
             </div>
             <div className="flex gap-3 mt-4">
