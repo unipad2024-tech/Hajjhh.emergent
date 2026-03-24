@@ -103,7 +103,16 @@ HUJJAH is a competitive team trivia social game for Saudi gatherings, now transf
 
 ## CHANGELOG
 
-### Mar 2026 — Tournament Redesign + Multi-Team Removal
+### Mar 2026 — Categories, UI & Admin Control
+- **3 new letter-based categories** seeded: أمثال شعبية (cat_proverbs), حرف وكلمة (cat_letters), من أنا؟ (cat_whois) — 20 questions each (60 total), total question bank now ~670
+- **is_active field** on categories — admin can deactivate/activate any category; inactive ones hidden from game, shown dim in admin
+- **PAYMENT_SECRET_KEY** added to backend .env (backend-only, never exposed to frontend)
+- **GameModeSelectPage redesign** — full-screen hero layout, 2 large cards (Standard / Tournament), الأكثر شيوعاً badge
+- **CategorySelectPage** — taller cards (minHeight 160px+), bigger images (height 180px), wider grid
+- **Admin dashboard** — is_active toggle checkbox in category form, dim+red-dot for inactive categories in sidebar, show_inactive=true param for full category list
+- All 10 tests PASS (100%) — iter_15
+
+
 - **Removed multi-team mode** (3/4 teams) completely — deleted MultiTeamSetupPage/MultiTeamBoardPage, removed routes, cleaned GameContext
 - **Tournament Bracket redesign** (`/tournament/bracket`): full visual overhaul with RoundColumn/Connector/MatchCard components, gold connector lines, glow on active match, pulsing border, champion overlay with confetti, progress bar, next-match banner
 - **Auto-winner detection**: GameBoardPage stores `currentMatchRef` in tournament state; winner screen auto-records result when returning to bracket
