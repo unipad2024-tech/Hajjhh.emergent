@@ -21,6 +21,11 @@ export default function AdminDashboard() {
   const token = localStorage.getItem("admin_token");
   const headers = { Authorization: `Bearer ${token}` };
 
+  // Role-based access
+  const [adminRole, setAdminRole] = useState(localStorage.getItem("admin_role") || "super_admin");
+  const [adminName, setAdminName] = useState(localStorage.getItem("admin_name") || "المدير الرئيسي");
+  const isSuperAdmin = adminRole === "super_admin";
+
   const [categories, setCategories] = useState([]);
   const [questions, setQuestions] = useState([]);
   const [users, setUsers] = useState([]);
@@ -34,6 +39,17 @@ export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState("questions");
   const [gameSettings, setGameSettings] = useState({ default_timer: 65, word_timers: { "300": 80, "600": 60, "900": 45 }, free_categories: [], trial_enabled: true, trial_team1_categories: [], trial_team2_categories: [], trial_questions_only: false });
   const [settingsSaved, setSettingsSaved] = useState(false);
+
+  // Admin logs state
+  const [logs, setLogs] = useState([]);
+  const [logsTotal, setLogsTotal] = useState(0);
+  const [logsLoading, setLogsLoading] = useState(false);
+
+  // Staff management state
+  const [staffList, setStaffList] = useState([]);
+  const [showStaffForm, setShowStaffForm] = useState(false);
+  const [staffForm, setStaffForm] = useState({ username: "", password: "", display_name: "" });
+  const [editingStaff, setEditingStaff] = useState(null);
 
   // Experimental mode
   const [expQuestions, setExpQuestions] = useState([]);
@@ -64,10 +80,19 @@ export default function AdminDashboard() {
 
   const verifyToken = async () => {
     try {
-      await axios.get(`${API}/admin/verify`, { headers });
+      const { data } = await axios.get(`${API}/admin/verify`, { headers });
+      // Refresh role from server response
+      const role = data.role || "super_admin";
+      const name = data.name || "المدير الرئيسي";
+      setAdminRole(role);
+      setAdminName(name);
+      localStorage.setItem("admin_role", role);
+      localStorage.setItem("admin_name", name);
       loadData();
     } catch {
       localStorage.removeItem("admin_token");
+      localStorage.removeItem("admin_role");
+      localStorage.removeItem("admin_name");
       navigate("/admin");
     }
   };
@@ -101,6 +126,23 @@ export default function AdminDashboard() {
       const { data } = await axios.get(`${API}/settings`);
       setGameSettings(data);
     } catch {}
+  }, []);
+
+  const loadLogs = useCallback(async () => {
+    setLogsLoading(true);
+    try {
+      const { data } = await axios.get(`${API}/admin/logs?limit=100`, { headers });
+      setLogs(data.logs || []);
+      setLogsTotal(data.total || 0);
+    } catch { toast.error("خطأ في تحميل سجل النشاط"); }
+    finally { setLogsLoading(false); }
+  }, []);
+
+  const loadStaff = useCallback(async () => {
+    try {
+      const { data } = await axios.get(`${API}/admin/staff`, { headers });
+      setStaffList(data);
+    } catch { toast.error("خطأ في تحميل قائمة الموظفين"); }
   }, []);
 
   const saveSettings = async () => {
@@ -141,6 +183,8 @@ export default function AdminDashboard() {
     if (activeTab === "users") loadUsers();
     if (activeTab === "analytics") loadAnalytics();
     if (activeTab === "settings") loadSettings();
+    if (activeTab === "logs") loadLogs();
+    if (activeTab === "staff") loadStaff();
   }, [activeTab]);
 
   const handleSeed = async () => {
@@ -315,6 +359,44 @@ export default function AdminDashboard() {
     } catch { toast.error("خطأ في الحذف"); }
   };
 
+  const handleGiftSubscription = async (userId, planId = "monthly") => {
+    try {
+      await axios.post(`${API}/admin/users/${userId}/gift-subscription`,
+        { plan_id: planId }, { headers });
+      toast.success("تم منح الاشتراك المميز مجاناً");
+      loadUsers();
+    } catch { toast.error("خطأ في منح الاشتراك"); }
+  };
+
+  const handleSaveStaff = async () => {
+    if (!staffForm.username.trim() || !staffForm.password.trim()) {
+      toast.error("اسم المستخدم وكلمة المرور مطلوبان"); return;
+    }
+    try {
+      if (editingStaff) {
+        await axios.put(`${API}/admin/staff/${editingStaff.id}`,
+          { display_name: staffForm.display_name, password: staffForm.password || undefined }, { headers });
+        toast.success("تم تحديث الموظف");
+      } else {
+        await axios.post(`${API}/admin/staff`, staffForm, { headers });
+        toast.success("تم إضافة الموظف");
+      }
+      setShowStaffForm(false);
+      setEditingStaff(null);
+      setStaffForm({ username: "", password: "", display_name: "" });
+      loadStaff();
+    } catch (e) { toast.error(e?.response?.data?.detail || "خطأ في الحفظ"); }
+  };
+
+  const handleDeleteStaff = async (staffId) => {
+    if (!window.confirm("حذف الموظف نهائياً؟")) return;
+    try {
+      await axios.delete(`${API}/admin/staff/${staffId}`, { headers });
+      toast.success("تم الحذف");
+      loadStaff();
+    } catch { toast.error("خطأ في الحذف"); }
+  };
+
   const filteredQuestions = questions.filter((q) => {
     const catMatch = selectedCat ? q.category_id === selectedCat : true;
     const diffMatch = selectedDifficulty === "all" ? true : q.difficulty === parseInt(selectedDifficulty);
@@ -326,6 +408,8 @@ export default function AdminDashboard() {
 
   const logout = () => {
     localStorage.removeItem("admin_token");
+    localStorage.removeItem("admin_role");
+    localStorage.removeItem("admin_name");
     navigate("/");
   };
 
@@ -337,32 +421,56 @@ export default function AdminDashboard() {
           <span className="text-2xl font-black">حُجّة</span>
           <span className="text-secondary/50">|</span>
           <span className="text-secondary/80 font-bold">لوحة الإدارة</span>
-        </div>
-        <div className="flex gap-3 items-center">
-          {/* Tabs */}
-          {["questions", "users", "analytics", "settings", "ai", "experimental"].map((tab) => (
-            <button
-              key={tab}
-              data-testid={`tab-${tab}`}
-              onClick={() => { setActiveTab(tab); if (tab === "experimental") { loadSettings(); loadExpQuestions(); } if (tab === "settings") loadSettings(); }}
-              className={`text-sm px-3 py-1 rounded-lg font-bold transition-all ${activeTab === tab ? "bg-secondary text-primary" : "text-secondary/60 hover:text-secondary"}`}
-            >
-              {tab === "questions" ? "الأسئلة"
-                : tab === "users" ? "المستخدمون"
-                : tab === "analytics" ? "الإحصاءات"
-                : tab === "settings" ? "الإعدادات"
-                : tab === "ai" ? "🤖 توليد AI"
-                : "🔓 وضع التجربة"}
-            </button>
-          ))}
-          <span className="text-secondary/20">|</span>
-          <button
-            data-testid="seed-btn"
-            onClick={handleSeed}
-            className="bg-secondary/20 border border-secondary/30 text-secondary text-sm px-4 py-2 rounded-lg hover:bg-secondary/30 transition-all"
+          {/* Role badge */}
+          <span
+            data-testid="admin-role-badge"
+            className={`text-xs px-2 py-0.5 rounded-full font-black border ${
+              isSuperAdmin
+                ? "bg-amber-400/20 border-amber-400/40 text-amber-300"
+                : "bg-blue-400/20 border-blue-400/40 text-blue-300"
+            }`}
           >
-            إضافة بيانات تجريبية
-          </button>
+            {isSuperAdmin ? "مدير رئيسي" : "موظف"}
+          </span>
+          <span className="text-secondary/40 text-xs">{adminName}</span>
+        </div>
+        <div className="flex gap-2 items-center flex-wrap">
+          {/* Tabs - filtered by role */}
+          {[
+            { key: "questions", label: "الأسئلة", forAll: true },
+            { key: "users", label: "المستخدمون", superOnly: true },
+            { key: "analytics", label: "الإحصاءات", superOnly: true },
+            { key: "settings", label: "الإعدادات", superOnly: true },
+            { key: "ai", label: "توليد AI", forAll: true },
+            { key: "experimental", label: "وضع التجربة", forAll: true },
+            { key: "logs", label: "سجل النشاط", superOnly: true },
+            { key: "staff", label: "الموظفون", superOnly: true },
+          ]
+            .filter(t => t.forAll || (t.superOnly && isSuperAdmin))
+            .map((tab) => (
+              <button
+                key={tab.key}
+                data-testid={`tab-${tab.key}`}
+                onClick={() => {
+                  setActiveTab(tab.key);
+                  if (tab.key === "experimental") { loadSettings(); loadExpQuestions(); }
+                  if (tab.key === "settings") loadSettings();
+                }}
+                className={`text-sm px-3 py-1 rounded-lg font-bold transition-all ${activeTab === tab.key ? "bg-secondary text-primary" : "text-secondary/60 hover:text-secondary"}`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          <span className="text-secondary/20">|</span>
+          {isSuperAdmin && (
+            <button
+              data-testid="seed-btn"
+              onClick={handleSeed}
+              className="bg-secondary/20 border border-secondary/30 text-secondary text-sm px-4 py-2 rounded-lg hover:bg-secondary/30 transition-all"
+            >
+              إضافة بيانات
+            </button>
+          )}
           <button onClick={() => navigate("/")} className="text-secondary/60 text-sm hover:text-secondary">الرئيسية</button>
           <button onClick={logout} className="text-secondary/60 text-sm hover:text-secondary">خروج</button>
         </div>
@@ -550,13 +658,22 @@ export default function AdminDashboard() {
                   </div>
                   <div className="flex gap-2 flex-shrink-0">
                     {user.subscription_type !== "premium" ? (
-                      <button
-                        data-testid={`make-premium-${user.id}`}
-                        onClick={() => handleUpdateUserSub(user.id, "premium")}
-                        className="text-amber-600 bg-amber-50 hover:bg-amber-100 px-3 py-1 rounded-lg text-xs font-bold transition-all"
-                      >
-                        ترقية مميز
-                      </button>
+                      <>
+                        <button
+                          data-testid={`make-premium-${user.id}`}
+                          onClick={() => handleUpdateUserSub(user.id, "premium")}
+                          className="text-amber-600 bg-amber-50 hover:bg-amber-100 px-3 py-1 rounded-lg text-xs font-bold transition-all"
+                        >
+                          ترقية
+                        </button>
+                        <button
+                          data-testid={`gift-sub-${user.id}`}
+                          onClick={() => handleGiftSubscription(user.id, "monthly")}
+                          className="text-green-600 bg-green-50 hover:bg-green-100 px-3 py-1 rounded-lg text-xs font-bold transition-all"
+                        >
+                          هدية
+                        </button>
+                      </>
                     ) : (
                       <button
                         onClick={() => handleUpdateUserSub(user.id, "free")}
@@ -604,19 +721,48 @@ export default function AdminDashboard() {
                 ))}
               </div>
 
+              {/* Categories Stats */}
+              {analytics.categories && (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  {[
+                    { label: "إجمالي الفئات", value: analytics.categories.total, color: "bg-teal-50 border-teal-200" },
+                    { label: "الفئات النشطة", value: analytics.categories.active, color: "bg-green-50 border-green-200" },
+                    { label: "الفئات المعطّلة", value: analytics.categories.inactive, color: "bg-red-50 border-red-200" },
+                    { label: "الفئات المميزة", value: analytics.categories.premium, color: "bg-amber-50 border-amber-200" },
+                  ].map((kpi) => (
+                    <div key={kpi.label} className={`${kpi.color} border rounded-xl p-4`}>
+                      <div className="text-3xl font-black text-primary mb-1">{kpi.value}</div>
+                      <div className="text-sm font-bold text-primary/70">{kpi.label}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Most Popular Category */}
+              {analytics.categories?.most_popular?.name && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center gap-4">
+                  <div className="text-3xl">🏆</div>
+                  <div>
+                    <div className="text-xs font-bold text-amber-700/60 uppercase tracking-widest">الفئة الأكثر أسئلة</div>
+                    <div className="font-black text-xl text-amber-800">{analytics.categories.most_popular.name}</div>
+                    <div className="text-amber-700/60 text-sm">{analytics.categories.most_popular.count} سؤال</div>
+                  </div>
+                </div>
+              )}
+
               {/* Revenue */}
               <div className="bg-white border border-primary/10 rounded-xl p-5">
                 <h3 className="font-black text-lg mb-3">الإيرادات</h3>
-                <div className="text-4xl font-black text-primary mb-1">${analytics.revenue.total}</div>
-                <div className="text-primary/50 text-sm">إجمالي الإيرادات ({analytics.revenue.currency})</div>
+                <div className="text-4xl font-black text-primary mb-1">{analytics.revenue.total} {analytics.revenue.currency}</div>
+                <div className="text-primary/50 text-sm">إجمالي الإيرادات</div>
                 {analytics.revenue.recent_transactions?.length > 0 && (
                   <div className="mt-4">
                     <div className="text-xs font-bold text-primary/50 uppercase tracking-widest mb-2">آخر المعاملات</div>
                     {analytics.revenue.recent_transactions.map((txn, i) => (
                       <div key={i} className="flex justify-between items-center py-1.5 border-b border-primary/5 text-sm">
-                        <span className="text-primary/60">{txn.email}</span>
-                        <span className={`font-bold ${txn.payment_status === "paid" ? "text-green-600" : "text-amber-600"}`}>
-                          ${txn.amount}
+                        <span className="text-primary/60">{txn.email || txn.gifted_by}</span>
+                        <span className={`font-bold ${txn.payment_status === "paid" ? "text-green-600" : txn.payment_status === "gift" ? "text-amber-600" : "text-red-500"}`}>
+                          {txn.payment_status === "gift" ? "هدية" : `${txn.amount} ${txn.currency || ""}`}
                         </span>
                       </div>
                     ))}
@@ -749,6 +895,207 @@ export default function AdminDashboard() {
               {(gameSettings.free_categories || []).length} فئة مجانية من أصل {categories.length}
             </p>
           </div>
+        </div>
+      )}
+
+      {/* ── ACTIVITY LOGS TAB ── */}
+      {activeTab === "logs" && (
+        <div className="p-6">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h2 className="text-2xl font-black">سجل النشاط</h2>
+              <p className="text-primary/50 text-sm mt-1">جميع الإجراءات التي قام بها المدراء والموظفون</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-primary/40 text-sm">{logsTotal} إجراء</span>
+              <button
+                data-testid="refresh-logs-btn"
+                onClick={loadLogs}
+                className="bg-primary/10 hover:bg-primary/20 text-primary px-4 py-2 rounded-lg text-sm font-bold transition-all"
+              >
+                تحديث
+              </button>
+            </div>
+          </div>
+          {logsLoading ? (
+            <div className="text-center py-16 text-primary/30">جاري التحميل...</div>
+          ) : logs.length === 0 ? (
+            <div className="text-center py-16 text-primary/30">
+              <div className="text-5xl mb-3">📋</div>
+              <div className="text-xl font-bold">لا يوجد سجل بعد</div>
+              <div className="text-sm mt-2">ستظهر هنا إجراءات المدراء والموظفين</div>
+            </div>
+          ) : (
+            <div className="bg-white border border-primary/10 rounded-2xl overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-primary/5 border-b border-primary/10">
+                  <tr>
+                    <th className="text-right p-3 font-black text-primary/60 text-xs uppercase tracking-widest">المسؤول</th>
+                    <th className="text-right p-3 font-black text-primary/60 text-xs uppercase tracking-widest">الدور</th>
+                    <th className="text-right p-3 font-black text-primary/60 text-xs uppercase tracking-widest">الإجراء</th>
+                    <th className="text-right p-3 font-black text-primary/60 text-xs uppercase tracking-widest">النوع</th>
+                    <th className="text-right p-3 font-black text-primary/60 text-xs uppercase tracking-widest">المحتوى</th>
+                    <th className="text-right p-3 font-black text-primary/60 text-xs uppercase tracking-widest">التاريخ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {logs.map((log, i) => (
+                    <tr key={log.id} data-testid={`log-row-${i}`}
+                      className={`border-b border-primary/5 hover:bg-primary/2 transition-colors ${i % 2 === 0 ? "" : "bg-primary/[0.02]"}`}>
+                      <td className="p-3 font-bold">{log.admin_name}</td>
+                      <td className="p-3">
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-black ${
+                          log.admin_role === "super_admin"
+                            ? "bg-amber-100 text-amber-700"
+                            : "bg-blue-100 text-blue-700"
+                        }`}>
+                          {log.admin_role === "super_admin" ? "مدير رئيسي" : "موظف"}
+                        </span>
+                      </td>
+                      <td className="p-3">
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${
+                          log.action.includes("حذف") ? "bg-red-100 text-red-700" :
+                          log.action.includes("إضافة") ? "bg-green-100 text-green-700" :
+                          log.action.includes("هدية") ? "bg-amber-100 text-amber-700" :
+                          "bg-primary/10 text-primary/70"
+                        }`}>
+                          {log.action}
+                        </span>
+                      </td>
+                      <td className="p-3 text-primary/60">{log.target_type}</td>
+                      <td className="p-3 text-primary/80 max-w-xs truncate" title={log.target_name}>{log.target_name}</td>
+                      <td className="p-3 text-primary/40 text-xs whitespace-nowrap">
+                        {new Date(log.timestamp).toLocaleString("ar-SA", { dateStyle: "short", timeStyle: "short" })}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── STAFF MANAGEMENT TAB ── */}
+      {activeTab === "staff" && (
+        <div className="p-6">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h2 className="text-2xl font-black">إدارة الموظفين</h2>
+              <p className="text-primary/50 text-sm mt-1">أنشئ وأدر حسابات موظفي المحتوى</p>
+            </div>
+            <button
+              data-testid="add-staff-btn"
+              onClick={() => { setEditingStaff(null); setStaffForm({ username: "", password: "", display_name: "" }); setShowStaffForm(true); }}
+              className="bg-primary text-secondary px-5 py-2 rounded-full font-bold hover:scale-105 transition-all"
+            >
+              + موظف جديد
+            </button>
+          </div>
+
+          {/* Staff Form */}
+          {showStaffForm && (
+            <div className="bg-white border border-primary/15 rounded-2xl p-6 mb-6">
+              <h3 className="font-black text-lg mb-4">{editingStaff ? "تعديل الموظف" : "إضافة موظف جديد"}</h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="text-sm font-bold text-primary/70 mb-1 block">اسم المستخدم *</label>
+                  <input
+                    data-testid="staff-username-input"
+                    type="text"
+                    value={staffForm.username}
+                    onChange={(e) => setStaffForm(f => ({ ...f, username: e.target.value }))}
+                    disabled={!!editingStaff}
+                    placeholder="مثال: staff1"
+                    className="w-full border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2.5 text-sm font-bold outline-none disabled:opacity-50"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-bold text-primary/70 mb-1 block">الاسم الظاهر</label>
+                  <input
+                    data-testid="staff-displayname-input"
+                    type="text"
+                    value={staffForm.display_name}
+                    onChange={(e) => setStaffForm(f => ({ ...f, display_name: e.target.value }))}
+                    placeholder="مثال: أحمد محمد"
+                    className="w-full border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2.5 text-sm font-bold outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-bold text-primary/70 mb-1 block">{editingStaff ? "كلمة مرور جديدة" : "كلمة المرور *"}</label>
+                  <input
+                    data-testid="staff-password-input"
+                    type="password"
+                    value={staffForm.password}
+                    onChange={(e) => setStaffForm(f => ({ ...f, password: e.target.value }))}
+                    placeholder="6 أحرف على الأقل"
+                    className="w-full border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2.5 text-sm font-bold outline-none"
+                  />
+                </div>
+              </div>
+              <div className="flex gap-3 mt-4">
+                <button
+                  data-testid="save-staff-btn"
+                  onClick={handleSaveStaff}
+                  className="bg-primary text-secondary px-6 py-2 rounded-full font-bold hover:scale-105 transition-all"
+                >
+                  {editingStaff ? "حفظ التعديلات" : "إضافة الموظف"}
+                </button>
+                <button
+                  onClick={() => { setShowStaffForm(false); setEditingStaff(null); }}
+                  className="bg-primary/10 text-primary px-6 py-2 rounded-full font-bold hover:bg-primary/20 transition-all"
+                >
+                  إلغاء
+                </button>
+              </div>
+              <p className="text-xs text-primary/40 mt-3">
+                الموظف يستطيع إدارة الأسئلة والفئات وتوليد AI فقط — لا يرى المستخدمين أو الإحصاءات أو الإيرادات.
+              </p>
+            </div>
+          )}
+
+          {/* Staff List */}
+          {staffList.length === 0 ? (
+            <div className="text-center py-16 text-primary/30">
+              <div className="text-5xl mb-3">👤</div>
+              <div className="text-xl font-bold">لا يوجد موظفون بعد</div>
+              <div className="text-sm mt-2">اضغط "+ موظف جديد" لإضافة موظف</div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {staffList.map((staff) => (
+                <div key={staff.id} data-testid={`staff-row-${staff.id}`}
+                  className="bg-white border border-primary/10 rounded-xl p-4 flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-black text-lg">
+                    {(staff.display_name || staff.username)[0]?.toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-black text-primary">{staff.display_name || staff.username}</div>
+                    <div className="text-primary/50 text-xs">@{staff.username}</div>
+                    <div className="text-primary/40 text-xs mt-0.5">
+                      {new Date(staff.created_at).toLocaleDateString("ar-SA")} · صلاحيات: الأسئلة والفئات فقط
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      data-testid={`edit-staff-${staff.id}`}
+                      onClick={() => { setEditingStaff(staff); setStaffForm({ username: staff.username, password: "", display_name: staff.display_name || "" }); setShowStaffForm(true); }}
+                      className="text-primary/50 hover:text-primary bg-primary/5 hover:bg-primary/10 px-3 py-1.5 rounded-lg text-sm font-bold transition-all"
+                    >
+                      تعديل
+                    </button>
+                    <button
+                      data-testid={`delete-staff-${staff.id}`}
+                      onClick={() => handleDeleteStaff(staff.id)}
+                      className="text-red-400/60 hover:text-red-500 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg text-sm font-bold transition-all"
+                    >
+                      حذف
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

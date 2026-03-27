@@ -9,6 +9,7 @@ const DARK_BG = { background: "radial-gradient(ellipse at top, #3D0810 0%, #1a02
 
 export default function AdminLoginPage() {
   const navigate = useNavigate();
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -16,12 +17,17 @@ export default function AdminLoginPage() {
     if (!password.trim()) { toast.error("أدخل كلمة المرور"); return; }
     setLoading(true);
     try {
-      const { data } = await axios.post(`${API}/admin/login`, { password });
+      const { data } = await axios.post(`${API}/admin/login`, {
+        username: username.trim() || "admin",
+        password,
+      });
       localStorage.setItem("admin_token", data.token);
-      toast.success("تم الدخول بنجاح!");
+      localStorage.setItem("admin_role", data.role || "super_admin");
+      localStorage.setItem("admin_name", data.name || "المدير الرئيسي");
+      toast.success(`مرحباً ${data.name}!`);
       navigate("/admin/dashboard");
     } catch (e) {
-      toast.error("كلمة المرور غلط!");
+      toast.error(e?.response?.data?.detail || "اسم المستخدم أو كلمة المرور غلط!");
     } finally {
       setLoading(false);
     }
@@ -40,7 +46,17 @@ export default function AdminLoginPage() {
         <div className="bg-primary/70 border border-secondary/30 rounded-3xl p-8 backdrop-blur-sm text-center">
           <div className="text-5xl mb-4">🔐</div>
           <h1 className="text-3xl font-black text-secondary mb-2">لوحة الإدارة</h1>
-          <p className="text-secondary/60 text-sm mb-8">أدخل كلمة المرور للدخول</p>
+          <p className="text-secondary/60 text-sm mb-8">أدخل بياناتك للدخول</p>
+
+          <input
+            data-testid="admin-username-input"
+            type="text"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            placeholder="اسم المستخدم (admin للمدير الرئيسي)"
+            className="w-full bg-primary-dark/50 border-2 border-secondary/30 focus:border-secondary text-secondary placeholder:text-secondary/30 px-4 py-3 rounded-xl text-sm font-bold outline-none transition-all text-center mb-3"
+            onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+          />
 
           <input
             data-testid="admin-password-input"

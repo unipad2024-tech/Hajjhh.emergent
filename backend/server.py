@@ -32,6 +32,8 @@ app.mount("/api/static", StaticFiles(directory=str(ROOT_DIR / "static")), name="
 SECRET_KEY      = os.environ.get('JWT_SECRET_KEY', 'hujjah_secret_2024')
 ADMIN_PASSWORD  = os.environ.get('ADMIN_PASSWORD', 'hujjah2024')
 STRIPE_API_KEY  = os.environ.get('STRIPE_API_KEY', '')
+PAYMENT_API_ID  = os.environ.get('PAYMENT_API_ID', '')
+PAYMENT_API_KEY = os.environ.get('PAYMENT_API_KEY', '')
 ALGORITHM       = "HS256"
 
 pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -64,11 +66,21 @@ class UserUpdate(BaseModel):
     password: Optional[str] = None
 
 class AdminLogin(BaseModel):
+    username: str = "admin"
     password: str
 
 class AdminUserUpdate(BaseModel):
     subscription_type: str
     subscription_expires_at: Optional[str] = None
+
+class StaffCreate(BaseModel):
+    username: str
+    password: str
+    display_name: str = ""
+
+class GiftSubscription(BaseModel):
+    plan_id: str = "monthly"
+    days: Optional[int] = None
 
 class Category(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -155,16 +167,45 @@ def create_token(payload: dict, expires_hours: int = 24) -> str:
     p = {**payload, "exp": datetime.now(timezone.utc) + timedelta(hours=expires_hours)}
     return jwt.encode(p, SECRET_KEY, algorithm=ALGORITHM)
 
-async def get_admin(authorization: Optional[str] = Header(None)):
+async def get_admin(authorization: Optional[str] = Header(None)) -> dict:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "غير مصرح")
     try:
         data = jwt.decode(authorization.split(" ")[1], SECRET_KEY, algorithms=[ALGORITHM])
         if data.get("role") != "admin":
             raise HTTPException(403, "غير مصرح")
-        return True
+        # backward compat: old tokens without sub_role — treat as super_admin
+        if "sub_role" not in data:
+            data["sub_role"] = "super_admin"
+            data["admin_name"] = "المدير الرئيسي"
+        return data
     except JWTError:
         raise HTTPException(401, "جلسة منتهية")
+
+async def get_super_admin(authorization: Optional[str] = Header(None)) -> dict:
+    """Dependency that only allows super_admin access."""
+    admin = await get_admin(authorization)
+    if admin.get("sub_role") != "super_admin":
+        raise HTTPException(403, "يتطلب صلاحيات المدير الرئيسي فقط")
+    return admin
+
+async def log_admin_action(admin_data: dict, action: str, target_type: str,
+                            target_name: str = "", details: str = ""):
+    """Log admin/staff actions to admin_logs collection."""
+    try:
+        log = {
+            "id": str(uuid.uuid4()),
+            "admin_name": admin_data.get("admin_name", "غير معروف"),
+            "admin_role": admin_data.get("sub_role", "admin"),
+            "action": action,
+            "target_type": target_type,
+            "target_name": target_name,
+            "details": details,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        await db.admin_logs.insert_one(log)
+    except Exception as e:
+        logger.warning(f"Failed to log admin action: {e}")
 
 async def get_current_user(authorization: Optional[str] = Header(None)) -> Optional[dict]:
     if not authorization or not authorization.startswith("Bearer "):
@@ -254,14 +295,32 @@ async def update_me(body: UserUpdate, user: dict = Depends(require_user)):
 
 @api_router.post("/admin/login")
 async def admin_login(body: AdminLogin):
-    if body.password != ADMIN_PASSWORD:
-        raise HTTPException(401, "كلمة المرور غلط")
-    token = create_token({"sub": "admin", "role": "admin"}, expires_hours=48)
-    return {"token": token}
+    username = (body.username or "admin").strip()
+    # Super admin login
+    if username.lower() == "admin" or username == "":
+        if body.password != ADMIN_PASSWORD:
+            raise HTTPException(401, "كلمة المرور غلط")
+        token = create_token(
+            {"sub": "admin", "role": "admin", "sub_role": "super_admin",
+             "admin_name": "المدير الرئيسي"},
+            expires_hours=48
+        )
+        return {"token": token, "role": "super_admin", "name": "المدير الرئيسي"}
+    # Staff login
+    staff = await db.admin_accounts.find_one({"username": username}, {"_id": 0})
+    if not staff or not verify_pw(body.password, staff.get("password_hash", "")):
+        raise HTTPException(401, "اسم المستخدم أو كلمة المرور غلط")
+    display = staff.get("display_name") or username
+    token = create_token(
+        {"sub": staff["id"], "role": "admin", "sub_role": "staff",
+         "admin_name": display},
+        expires_hours=48
+    )
+    return {"token": token, "role": "staff", "name": display}
 
 @api_router.get("/admin/verify")
-async def admin_verify(_: bool = Depends(get_admin)):
-    return {"valid": True}
+async def admin_verify(admin: dict = Depends(get_admin)):
+    return {"valid": True, "role": admin.get("sub_role", "super_admin"), "name": admin.get("admin_name", "المدير")}
 
 # Keep backward compat
 @api_router.post("/auth/admin-login")
@@ -277,7 +336,7 @@ async def verify_legacy(_: bool = Depends(get_admin)):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @api_router.get("/admin/users")
-async def admin_list_users(_: bool = Depends(get_admin)):
+async def admin_list_users(_: dict = Depends(get_super_admin)):
     users = await db.users.find({}, {"_id": 0, "password_hash": 0, "answered_question_ids": 0}).to_list(1000)
     for u in users:
         u["answered_count"] = 0
@@ -287,7 +346,7 @@ async def admin_list_users(_: bool = Depends(get_admin)):
     return users
 
 @api_router.put("/admin/users/{user_id}")
-async def admin_update_user(user_id: str, body: AdminUserUpdate, _: bool = Depends(get_admin)):
+async def admin_update_user(user_id: str, body: AdminUserUpdate, admin: dict = Depends(get_super_admin)):
     updates = {"subscription_type": body.subscription_type}
     if body.subscription_expires_at:
         updates["subscription_expires_at"] = body.subscription_expires_at
@@ -298,15 +357,21 @@ async def admin_update_user(user_id: str, body: AdminUserUpdate, _: bool = Depen
         updates["subscription_expires_at"] = None
     await db.users.update_one({"id": user_id}, {"$set": updates})
     user = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    await log_admin_action(admin, "تعديل اشتراك", "مستخدم",
+                           user.get("username", user_id) if user else user_id,
+                           f"الاشتراك → {body.subscription_type}")
     return user
 
 @api_router.delete("/admin/users/{user_id}")
-async def admin_delete_user(user_id: str, _: bool = Depends(get_admin)):
+async def admin_delete_user(user_id: str, admin: dict = Depends(get_super_admin)):
+    user = await db.users.find_one({"id": user_id}, {"_id": 0})
     await db.users.delete_one({"id": user_id})
+    await log_admin_action(admin, "حذف", "مستخدم",
+                           user.get("username", user_id) if user else user_id)
     return {"message": "تم الحذف"}
 
 @api_router.get("/admin/analytics")
-async def admin_analytics(_: bool = Depends(get_admin)):
+async def admin_analytics(_: dict = Depends(get_super_admin)):
     now = datetime.now(timezone.utc)
     yesterday  = (now - timedelta(days=1)).isoformat()
     week_ago   = (now - timedelta(days=7)).isoformat()
@@ -328,20 +393,28 @@ async def admin_analytics(_: bool = Depends(get_admin)):
         count = await db.questions.count_documents({"category_id": c["id"]})
         cat_stats.append({"id": c["id"], "name": c["name"], "count": count})
 
+    # Enhanced platform analytics
+    active_cats = await db.categories.count_documents({"is_active": {"$ne": False}})
+    inactive_cats = await db.categories.count_documents({"is_active": False})
+    premium_cats = await db.categories.count_documents({"is_premium": True})
+    most_popular = max(cat_stats, key=lambda x: x["count"]) if cat_stats else {}
+
     return {
         "users":    {"total": users_total, "premium": premium, "free": users_total - premium, "recent_7d": recent_7d},
         "questions": {"total": q_total, "by_category": cat_stats},
         "sessions": {"total": sessions_total, "active_24h": active_24h},
-        "revenue":  {"total": round(total_revenue, 2), "currency": "USD", "recent_transactions": recent_txns},
+        "revenue":  {"total": round(total_revenue, 2), "currency": "SAR", "recent_transactions": recent_txns},
+        "categories": {"total": len(cats), "active": active_cats, "inactive": inactive_cats,
+                       "premium": premium_cats, "most_popular": most_popular},
     }
 
 @api_router.get("/admin/sessions")
-async def admin_sessions(_: bool = Depends(get_admin)):
+async def admin_sessions(_: dict = Depends(get_super_admin)):
     sessions = await db.game_sessions.find({}, {"_id": 0}).sort("created_at", -1).to_list(50)
     return sessions
 
 @api_router.get("/admin/payments")
-async def admin_payments(_: bool = Depends(get_admin)):
+async def admin_payments(_: dict = Depends(get_super_admin)):
     txns = await db.payment_transactions.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)
     return txns
 
@@ -379,23 +452,27 @@ async def get_free_categories():
     }
 
 @api_router.post("/categories")
-async def create_category(body: CategoryCreate, _: bool = Depends(get_admin)):
+async def create_category(body: CategoryCreate, admin: dict = Depends(get_admin)):
     cat = Category(**body.model_dump())
     await db.categories.insert_one(cat.model_dump())
+    await log_admin_action(admin, "إضافة", "فئة", cat.name)
     return cat
 
 @api_router.put("/categories/{cat_id}")
-async def update_category(cat_id: str, body: CategoryCreate, _: bool = Depends(get_admin)):
+async def update_category(cat_id: str, body: CategoryCreate, admin: dict = Depends(get_admin)):
     upd = {**body.model_dump(), "updated_at": datetime.now(timezone.utc).isoformat()}
     res = await db.categories.find_one_and_update({"id": cat_id}, {"$set": upd}, {"_id": 0}, return_document=True)
     if not res:
         raise HTTPException(404, "الفئة غير موجودة")
+    await log_admin_action(admin, "تعديل", "فئة", res.get("name", cat_id))
     return res
 
 @api_router.delete("/categories/{cat_id}")
-async def delete_category(cat_id: str, _: bool = Depends(get_admin)):
+async def delete_category(cat_id: str, admin: dict = Depends(get_admin)):
+    cat = await db.categories.find_one({"id": cat_id}, {"_id": 0})
     await db.categories.delete_one({"id": cat_id})
     await db.questions.delete_many({"category_id": cat_id})
+    await log_admin_action(admin, "حذف", "فئة", cat.get("name", cat_id) if cat else cat_id)
     return {"message": "تم الحذف"}
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -423,25 +500,31 @@ async def get_question(q_id: str):
     return q
 
 @api_router.post("/questions")
-async def create_question(body: QuestionCreate, _: bool = Depends(get_admin)):
+async def create_question(body: QuestionCreate, admin: dict = Depends(get_admin)):
     q = Question(**body.model_dump())
     await db.questions.insert_one(q.model_dump())
+    cat = await db.categories.find_one({"id": body.category_id}, {"_id": 0, "name": 1})
+    cat_name = cat.get("name", body.category_id) if cat else body.category_id
+    await log_admin_action(admin, "إضافة", "سؤال", q.text[:60], f"فئة: {cat_name} | صعوبة: {body.difficulty}")
     return q
 
 @api_router.put("/questions/{q_id}")
-async def update_question(q_id: str, body: QuestionCreate, _: bool = Depends(get_admin)):
+async def update_question(q_id: str, body: QuestionCreate, admin: dict = Depends(get_admin)):
     upd = {**body.model_dump(), "updated_at": datetime.now(timezone.utc).isoformat()}
     res = await db.questions.find_one_and_update({"id": q_id}, {"$set": upd}, {"_id": 0}, return_document=True)
     if not res: raise HTTPException(404, "السؤال غير موجود")
+    await log_admin_action(admin, "تعديل", "سؤال", res.get("text", q_id)[:60])
     return res
 
 @api_router.delete("/questions/{q_id}")
-async def delete_question(q_id: str, _: bool = Depends(get_admin)):
+async def delete_question(q_id: str, admin: dict = Depends(get_admin)):
+    q = await db.questions.find_one({"id": q_id}, {"_id": 0})
     await db.questions.delete_one({"id": q_id})
+    await log_admin_action(admin, "حذف", "سؤال", q.get("text", q_id)[:60] if q else q_id)
     return {"message": "تم الحذف"}
 
 @api_router.patch("/questions/{q_id}/experimental")
-async def toggle_experimental(q_id: str, body: dict, _: bool = Depends(get_admin)):
+async def toggle_experimental(q_id: str, body: dict, admin: dict = Depends(get_admin)):
     val = body.get("is_experimental", True)
     await db.questions.update_one({"id": q_id}, {"$set": {"is_experimental": val}})
     return {"id": q_id, "is_experimental": val}
@@ -683,17 +766,128 @@ async def stripe_webhook(request: Request):
 # PAYMENT CONFIG (Placeholder for future payment integration)
 # ══════════════════════════════════════════════════════════════════════════════
 
+# ══════════════════════════════════════════════════════════════════════════════
+# PAYMENT CONFIG & INTEGRATION (PAYMENT_API_ID / PAYMENT_API_KEY)
+# ══════════════════════════════════════════════════════════════════════════════
+
 PAYMENT_PUBLIC_KEY  = os.environ.get("PAYMENT_PUBLIC_KEY", "")
-PAYMENT_SECRET_KEY  = os.environ.get("PAYMENT_SECRET_KEY", "")  # backend-only, never exposed to frontend
-PAYMENT_SECRET_KEY  = os.environ.get("PAYMENT_SECRET_KEY", "")
+PAYMENT_SECRET_KEY_LEGACY = os.environ.get("PAYMENT_SECRET_KEY", "")
 
 @api_router.get("/payment/config")
 async def get_payment_config():
-    """Returns public payment configuration for frontend integration."""
+    """Returns public payment configuration for frontend."""
     return {
         "public_key": PAYMENT_PUBLIC_KEY,
-        "enabled": bool(PAYMENT_PUBLIC_KEY),
+        "enabled": bool(PAYMENT_PUBLIC_KEY or PAYMENT_API_ID),
+        "gateway": "custom" if PAYMENT_API_ID else ("stripe" if STRIPE_API_KEY else "none"),
     }
+
+@api_router.post("/payment/v2/initiate")
+async def payment_initiate(body: dict, user: dict = Depends(require_user)):
+    """Initiate a payment using PAYMENT_API_ID/PAYMENT_API_KEY."""
+    if not PAYMENT_API_ID or not PAYMENT_API_KEY:
+        raise HTTPException(503, "بوابة الدفع غير مفعّلة — تواصل مع الإدارة")
+    plan_id = body.get("plan_id", "monthly")
+    plan = SUBSCRIPTION_PLANS.get(plan_id)
+    if not plan:
+        raise HTTPException(400, "الخطة غير موجودة")
+    txn = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "email": user["email"],
+        "plan_id": plan_id,
+        "amount": plan["amount"],
+        "currency": plan["currency"],
+        "payment_status": "pending",
+        "gateway": "payment_api",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.payment_transactions.insert_one(txn)
+    return {
+        "transaction_id": txn["id"],
+        "amount": plan["amount"],
+        "currency": plan["currency"],
+        "status": "pending",
+        "message": "تم إنشاء طلب الدفع — يرجى إكمال الدفع عبر بوابة الدفع",
+    }
+
+@api_router.get("/payment/v2/verify/{transaction_id}")
+async def payment_verify(transaction_id: str, user: dict = Depends(require_user)):
+    """Verify payment status and activate premium if paid."""
+    if not PAYMENT_API_ID or not PAYMENT_API_KEY:
+        raise HTTPException(503, "بوابة الدفع غير مفعّلة")
+    txn = await db.payment_transactions.find_one({"id": transaction_id, "user_id": user["id"]}, {"_id": 0})
+    if not txn:
+        raise HTTPException(404, "المعاملة غير موجودة")
+    if txn.get("payment_status") == "paid":
+        return {"payment_status": "paid", "message": "تم التحقق — الاشتراك مفعّل"}
+    return {"payment_status": txn.get("payment_status", "pending"), "message": "بانتظار تأكيد الدفع"}
+
+@api_router.post("/payment/v2/activate")
+async def payment_activate(body: dict, admin: dict = Depends(get_super_admin)):
+    """Manually activate premium for a user (after payment verification)."""
+    user_id = body.get("user_id")
+    transaction_id = body.get("transaction_id")
+    plan_id = body.get("plan_id", "monthly")
+    if not user_id:
+        raise HTTPException(400, "user_id مطلوب")
+    plan = SUBSCRIPTION_PLANS.get(plan_id, SUBSCRIPTION_PLANS["monthly"])
+    expires = (datetime.now(timezone.utc) + timedelta(days=plan["days"])).isoformat()
+    await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"subscription_type": "premium", "subscription_expires_at": expires}}
+    )
+    if transaction_id:
+        await db.payment_transactions.update_one(
+            {"id": transaction_id},
+            {"$set": {"payment_status": "paid", "status": "complete",
+                      "updated_at": datetime.now(timezone.utc).isoformat()}}
+        )
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    await log_admin_action(admin, "تفعيل اشتراك", "مستخدم",
+                           user.get("username", user_id) if user else user_id,
+                           f"الخطة: {plan_id}")
+    return {"message": "تم تفعيل الاشتراك المميز", "expires_at": expires}
+
+@api_router.post("/payment/v2/renew")
+async def payment_renew(body: dict, admin: dict = Depends(get_super_admin)):
+    """Renew or extend a user's premium subscription."""
+    user_id = body.get("user_id")
+    plan_id = body.get("plan_id", "monthly")
+    if not user_id:
+        raise HTTPException(400, "user_id مطلوب")
+    plan = SUBSCRIPTION_PLANS.get(plan_id, SUBSCRIPTION_PLANS["monthly"])
+    user = await db.users.find_one({"id": user_id}, {"_id": 0})
+    current_exp = user.get("subscription_expires_at") if user else None
+    try:
+        base = datetime.fromisoformat(current_exp) if current_exp else datetime.now(timezone.utc)
+        if base < datetime.now(timezone.utc):
+            base = datetime.now(timezone.utc)
+    except Exception:
+        base = datetime.now(timezone.utc)
+    new_exp = (base + timedelta(days=plan["days"])).isoformat()
+    await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"subscription_type": "premium", "subscription_expires_at": new_exp}}
+    )
+    await log_admin_action(admin, "تجديد اشتراك", "مستخدم",
+                           user.get("username", user_id) if user else user_id,
+                           f"الخطة: {plan_id} | حتى: {new_exp[:10]}")
+    return {"message": "تم تجديد الاشتراك", "expires_at": new_exp}
+
+@api_router.post("/payment/v2/failure")
+async def payment_failure(body: dict):
+    """Handle payment failure — update transaction status."""
+    transaction_id = body.get("transaction_id")
+    reason = body.get("reason", "فشل الدفع")
+    if transaction_id:
+        await db.payment_transactions.update_one(
+            {"id": transaction_id},
+            {"$set": {"payment_status": "failed", "status": "failed",
+                      "failure_reason": reason,
+                      "updated_at": datetime.now(timezone.utc).isoformat()}}
+        )
+    return {"message": "تم تسجيل فشل الدفع"}
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SEED
@@ -718,7 +912,7 @@ PREMIUM_CATEGORIES_SEED = [
 ]
 
 @api_router.post("/migrate-premium")
-async def migrate_premium_categories(_: bool = Depends(get_admin)):
+async def migrate_premium_categories(_: dict = Depends(get_super_admin)):
     """Add premium categories to existing DB without resetting data."""
     added_cats = 0
     ts = datetime.now(timezone.utc).isoformat()
@@ -946,7 +1140,7 @@ def _build_premium_questions() -> list:
     return qs
 
 @api_router.post("/seed")
-async def seed_data(force: bool = False, _: bool = Depends(get_admin)):
+async def seed_data(force: bool = False, _: dict = Depends(get_super_admin)):
     existing = await db.categories.count_documents({})
     if existing > 0 and not force:
         return {"message": "البيانات موجودة مسبقاً"}
@@ -1655,7 +1849,7 @@ async def get_settings():
     return merged
 
 @api_router.put("/settings")
-async def update_settings(body: dict, admin=Depends(get_admin)):
+async def update_settings(body: dict, admin: dict = Depends(get_admin)):
     body.pop("_id", None)
     body.pop("key", None)
     await db.settings.update_one(
@@ -1664,6 +1858,7 @@ async def update_settings(body: dict, admin=Depends(get_admin)):
         upsert=True
     )
     updated = await db.settings.find_one({"key": "game_settings"}, {"_id": 0})
+    await log_admin_action(admin, "تعديل", "إعدادات", "إعدادات اللعبة")
     if updated:
         updated.pop("_id", None)
         return {**DEFAULT_SETTINGS, **updated}
@@ -1794,7 +1989,7 @@ async def root():
     return {"message": "Hujjah API v2 – حُجّة", "version": "2.0"}
 
 @api_router.post("/admin/seed-letter-categories")
-async def seed_letter_categories(_: bool = Depends(get_admin)):
+async def seed_letter_categories(_: dict = Depends(get_super_admin)):
     """Add 3 new letter/word-based categories and their questions."""
     new_cats = [
         {
@@ -1941,6 +2136,102 @@ async def seed_letter_categories(_: bool = Depends(get_admin)):
         "questions_added": added_qs,
         "total_questions": len(all_questions),
     }
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ADMIN LOGS  (Super Admin only)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@api_router.get("/admin/logs")
+async def get_admin_logs(limit: int = 50, skip: int = 0, admin: dict = Depends(get_super_admin)):
+    logs = await db.admin_logs.find({}, {"_id": 0}).sort("timestamp", -1).skip(skip).limit(limit).to_list(limit)
+    total = await db.admin_logs.count_documents({})
+    return {"logs": logs, "total": total, "limit": limit, "skip": skip}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STAFF MANAGEMENT  (Super Admin only)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@api_router.get("/admin/staff")
+async def list_staff(_: dict = Depends(get_super_admin)):
+    staff = await db.admin_accounts.find({}, {"_id": 0, "password_hash": 0}).to_list(100)
+    return staff
+
+@api_router.post("/admin/staff")
+async def create_staff(body: StaffCreate, admin: dict = Depends(get_super_admin)):
+    existing = await db.admin_accounts.find_one({"username": body.username})
+    if existing:
+        raise HTTPException(409, "اسم المستخدم محجوز")
+    if len(body.password) < 6:
+        raise HTTPException(400, "كلمة المرور يجب أن تكون 6 أحرف على الأقل")
+    staff = {
+        "id": str(uuid.uuid4()),
+        "username": body.username.strip(),
+        "password_hash": hash_pw(body.password),
+        "display_name": (body.display_name or body.username).strip(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.admin_accounts.insert_one(staff)
+    await log_admin_action(admin, "إضافة موظف", "موظف", staff["display_name"])
+    return {"id": staff["id"], "username": staff["username"], "display_name": staff["display_name"],
+            "created_at": staff["created_at"]}
+
+@api_router.put("/admin/staff/{staff_id}")
+async def update_staff(staff_id: str, body: dict, admin: dict = Depends(get_super_admin)):
+    updates = {}
+    if body.get("display_name"):
+        updates["display_name"] = body["display_name"].strip()
+    if body.get("password"):
+        if len(body["password"]) < 6:
+            raise HTTPException(400, "كلمة المرور 6 أحرف على الأقل")
+        updates["password_hash"] = hash_pw(body["password"])
+    if not updates:
+        raise HTTPException(400, "لا توجد بيانات للتحديث")
+    await db.admin_accounts.update_one({"id": staff_id}, {"$set": updates})
+    staff = await db.admin_accounts.find_one({"id": staff_id}, {"_id": 0, "password_hash": 0})
+    if not staff:
+        raise HTTPException(404, "الموظف غير موجود")
+    await log_admin_action(admin, "تعديل موظف", "موظف", staff.get("display_name", staff_id))
+    return staff
+
+@api_router.delete("/admin/staff/{staff_id}")
+async def delete_staff(staff_id: str, admin: dict = Depends(get_super_admin)):
+    staff = await db.admin_accounts.find_one({"id": staff_id}, {"_id": 0})
+    if not staff:
+        raise HTTPException(404, "الموظف غير موجود")
+    await db.admin_accounts.delete_one({"id": staff_id})
+    await log_admin_action(admin, "حذف موظف", "موظف", staff.get("display_name", staff_id))
+    return {"message": "تم الحذف"}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GIFT SUBSCRIPTION  (Super Admin only)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@api_router.post("/admin/users/{user_id}/gift-subscription")
+async def gift_subscription(user_id: str, body: GiftSubscription, admin: dict = Depends(get_super_admin)):
+    plan = SUBSCRIPTION_PLANS.get(body.plan_id, SUBSCRIPTION_PLANS["monthly"])
+    days = body.days if body.days else plan["days"]
+    expires = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+    await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"subscription_type": "premium", "subscription_expires_at": expires}}
+    )
+    txn = {
+        "id": str(uuid.uuid4()),
+        "user_id": user_id,
+        "plan_id": body.plan_id,
+        "amount": 0,
+        "currency": "SAR",
+        "payment_status": "gift",
+        "status": "complete",
+        "gifted_by": admin.get("admin_name"),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.payment_transactions.insert_one(txn)
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    await log_admin_action(admin, "هدية اشتراك", "مستخدم",
+                           user.get("username", user_id) if user else user_id,
+                           f"مدة {days} يوم حتى {expires[:10]}")
+    return {"message": f"تم منح الاشتراك المميز لـ {days} يوم", "expires_at": expires, "user": user}
 
 app.include_router(api_router)
 app.add_middleware(
