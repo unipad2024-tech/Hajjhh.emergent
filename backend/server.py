@@ -541,12 +541,49 @@ async def update_question(q_id: str, body: QuestionCreate, admin: dict = Depends
 @api_router.delete("/questions/{q_id}")
 async def delete_question(q_id: str, admin: dict = Depends(get_admin)):
     q = await db.questions.find_one({"id": q_id}, {"_id": 0})
+    if not q:
+        raise HTTPException(404, "السؤال غير موجود")
+    # Backup before deletion — questions can be restored from admin panel
+    backup = {**q, "deleted_at": datetime.now(timezone.utc).isoformat(),
+              "deleted_by": admin.get("admin_name", "غير معروف")}
+    await db.deleted_questions.insert_one(backup)
     await db.questions.delete_one({"id": q_id})
     await log_admin_action(admin, "حذف", "سؤال", q.get("text", q_id)[:60] if q else q_id)
-    return {"message": "تم الحذف"}
+    return {"message": "تم الحذف (يمكن استعادته من سلة المحذوفات)"}
 
-@api_router.patch("/questions/{q_id}/experimental")
-async def toggle_experimental(q_id: str, body: dict, admin: dict = Depends(get_admin)):
+@api_router.get("/admin/deleted-questions")
+async def get_deleted_questions(limit: int = 50, admin: dict = Depends(get_admin)):
+    """List recently deleted questions — admin only."""
+    deleted = await db.deleted_questions.find(
+        {}, {"_id": 0}
+    ).sort("deleted_at", -1).limit(limit).to_list(limit)
+    return {"items": deleted, "total": len(deleted)}
+
+@api_router.post("/admin/restore-question/{q_id}")
+async def restore_question(q_id: str, admin: dict = Depends(get_admin)):
+    """Restore a question from the deleted questions archive."""
+    q = await db.deleted_questions.find_one({"id": q_id}, {"_id": 0})
+    if not q:
+        raise HTTPException(404, "السؤال غير موجود في المحذوفات")
+    restore_doc = {k: v for k, v in q.items() if k not in ("deleted_at", "deleted_by")}
+    # Assign a fresh ID to avoid collision
+    restore_doc["id"] = str(uuid.uuid4())
+    restore_doc["restored_at"] = datetime.now(timezone.utc).isoformat()
+    await db.questions.insert_one(restore_doc)
+    await db.deleted_questions.delete_one({"id": q_id})
+    await log_admin_action(admin, "استعادة سؤال", "سؤال", q.get("text", q_id)[:60])
+    return {"message": "تمت الاستعادة", "new_id": restore_doc["id"]}
+
+@api_router.patch("/questions/{q_id}/autosave")
+async def autosave_question(q_id: str, body: dict, admin: dict = Depends(get_admin)):
+    """Quick auto-save for question field changes — no full validation required."""
+    allowed_fields = {"text", "answer", "image_url", "answer_image_url", "image_query", "difficulty"}
+    updates = {k: v for k, v in body.items() if k in allowed_fields}
+    if not updates:
+        return {"saved": False, "reason": "no valid fields"}
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.questions.update_one({"id": q_id}, {"$set": updates})
+    return {"saved": True, "updated_fields": list(updates.keys())}
     val = body.get("is_experimental", True)
     await db.questions.update_one({"id": q_id}, {"$set": {"is_experimental": val}})
     return {"id": q_id, "is_experimental": val}
@@ -1162,13 +1199,11 @@ def _build_premium_questions() -> list:
     return qs
 
 @api_router.post("/seed")
-async def seed_data(force: bool = False, _: dict = Depends(get_super_admin)):
-    existing = await db.categories.count_documents({})
-    if existing > 0 and not force:
-        return {"message": "البيانات موجودة مسبقاً"}
-    if force:
-        await db.categories.delete_many({})
-        await db.questions.delete_many({})
+async def seed_data(_: dict = Depends(get_super_admin)):
+    """Seed ONLY adds new default categories/questions. NEVER deletes or overwrites existing data."""
+    existing_cats = await db.categories.count_documents({})
+    existing_qs   = await db.questions.count_documents({})
+    # Safety: absolutely never delete existing user data
 
     categories = [
         {"id":"cat_flags",   "name":"اعلام دول",      "icon":"🏳️","image_url":"https://static.prod-images.emergentagent.com/jobs/2e2396b6-cc98-44c9-bfbe-97e0e9727ada/images/789e9577be35fbf27c01b939a7864cd14c4aa947ecdd1dffb985e8cf92803c56.png","is_special":False,"is_premium":False,"color":"#166534","order":1,"description":"خمّن علم الدولة!","created_at":datetime.now(timezone.utc).isoformat()},
@@ -1193,10 +1228,14 @@ async def seed_data(force: bool = False, _: dict = Depends(get_super_admin)):
         {"id":"cat_cars",    "name":"سيارات",          "icon":"🚗","image_url":"https://images.unsplash.com/photo-1503376780353-7e6692767b70?w=400&q=80","is_special":False,"is_premium":True,"color":"#374151","order":19,"description":"عالم السيارات والسباقات","created_at":datetime.now(timezone.utc).isoformat()},
         {"id":"cat_space",   "name":"الفضاء",          "icon":"🚀","image_url":"https://images.unsplash.com/photo-1446776811953-b23d57bd21aa?w=400&q=80","is_special":False,"is_premium":True,"color":"#0c0a2e","order":20,"description":"الكون والفضاء والنجوم","created_at":datetime.now(timezone.utc).isoformat()},
     ]
-    await db.categories.insert_many(categories)
+    # SAFE INSERT: only add categories that don't exist yet (by id)
+    existing_cat_ids = {c["id"] async for c in db.categories.find({}, {"_id": 0, "id": 1})}
+    new_cats = [c for c in categories if c["id"] not in existing_cat_ids]
+    if new_cats:
+        await db.categories.insert_many(new_cats)
+    added_cats = len(new_cats)
 
     questions = [
-        # ── اعلام دول ─────────────────────────────────────────────────
         q("cat_flags",300,"علم أي دولة هذا؟","اليابان","https://flagcdn.com/w320/jp.png"),
         q("cat_flags",300,"علم أي دولة هذا؟","فرنسا","https://flagcdn.com/w320/fr.png"),
         q("cat_flags",300,"علم أي دولة هذا؟","المملكة المتحدة","https://flagcdn.com/w320/gb.png"),
@@ -1837,10 +1876,22 @@ async def seed_data(force: bool = False, _: dict = Depends(get_super_admin)):
         q("cat_space",900,"ما اسم المهمة الفضائية التي أوصلت أول إنسان للقمر؟","أبولو 11"),
     ]
 
-    await db.questions.insert_many(questions)
-    total_q = len(questions)
-    total_c = len(categories)
-    return {"message": f"تم إضافة {total_c} فئة و {total_q} سؤال"}
+    # SAFE INSERT: only add seed questions that don't already exist (by text+category_id)
+    existing_texts = set()
+    async for eq in db.questions.find({}, {"_id": 0, "text": 1, "category_id": 1}):
+        existing_texts.add((eq.get("category_id",""), eq.get("text","").strip()))
+    new_questions = [qu for qu in questions if (qu.get("category_id",""), qu.get("text","").strip()) not in existing_texts]
+    if new_questions:
+        await db.questions.insert_many(new_questions)
+    added_qs = len(new_questions)
+    total_c = len(new_cats)
+    return {
+        "message": f"تمت إضافة {total_c} فئة جديدة و {added_qs} سؤال جديد (لم يُحذف شيء)",
+        "categories_added": total_c,
+        "questions_added": added_qs,
+        "categories_skipped": len(categories) - total_c,
+        "questions_skipped": len(questions) - added_qs,
+    }
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1945,7 +1996,22 @@ async def ai_generate_questions(body: dict, admin=Depends(get_admin)):
 
     cat = await db.categories.find_one({"id": category_id}, {"_id": 0})
     cat_name   = cat.get("name", "عامة") if cat else "عامة"
+    cat_desc   = (cat.get("description") or cat_name) if cat else cat_name
     diff_label = "سهلة ومباشرة" if difficulty == 300 else ("متوسطة الصعوبة" if difficulty == 600 else "صعبة ومتحدية")
+
+    # Fetch existing questions to avoid duplication
+    existing_qs = await db.questions.find(
+        {"category_id": category_id},
+        {"_id": 0, "text": 1, "answer": 1}
+    ).to_list(200)
+    existing_hint = ""
+    if existing_qs:
+        sample = existing_qs[-20:]  # last 20 to keep prompt size reasonable
+        existing_lines = "\n".join(f"- {q['text']}" for q in sample)
+        existing_hint = (
+            f"\n⚠️ لا تكرر هذه الأسئلة الموجودة مسبقاً في قاعدة البيانات:\n"
+            f"{existing_lines}\n\n"
+        )
 
     custom_instruction = ""
     if prompt_description:
@@ -1953,13 +2019,15 @@ async def ai_generate_questions(body: dict, admin=Depends(get_admin)):
 
     prompt = (
         f"أنشئ بالضبط {count} سؤال ترفيهي لفئة \"{cat_name}\" بمستوى ({diff_label}).\n"
+        f"وصف الفئة: {cat_desc}\n"
         f"{custom_instruction}\n"
         "شروط أساسية:\n"
         "- اكتب الأسئلة والإجابات باللغة العربية\n"
         "- الأسئلة حماسية، متنوعة، وغير متكررة\n"
         "- الإجابة قصيرة جداً: كلمة أو كلمتان فقط\n"
         "- لا تُضِف أي شرح أو ترقيم خارج الـ JSON\n"
-        "- image_query: جملة قصيرة بالإنجليزية لاستخدامها في البحث عن صورة ذات صلة (للإجابة أو السؤال)\n\n"
+        "- image_query: جملة قصيرة بالإنجليزية لاستخدامها في البحث عن صورة ذات صلة (للإجابة أو السؤال)\n"
+        f"{existing_hint}"
         "أرجع JSON array فقط بالشكل التالي وبدون أي نص قبله أو بعده:\n"
         '[{"text":"نص السؤال؟","answer":"الإجابة","image_query":"english search query"}]'
     )

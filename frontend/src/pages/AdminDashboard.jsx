@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
@@ -196,17 +196,41 @@ export default function AdminDashboard() {
     if (activeTab === "staff") loadStaff();
   }, [activeTab]);
 
-  const handleSeed = async () => {
-    setLoading(true);
+  // ── Auto-save state ──
+  const [autoSaveStatus, setAutoSaveStatus] = useState(null); // null | 'saving' | 'saved'
+  const autoSaveTimerRef = useRef(null);
+
+  const triggerAutoSave = useCallback((questionId, fields) => {
+    if (!questionId) return;
+    clearTimeout(autoSaveTimerRef.current);
+    setAutoSaveStatus('saving');
+    autoSaveTimerRef.current = setTimeout(async () => {
+      try {
+        await axios.patch(`${API}/questions/${questionId}/autosave`, fields, { headers });
+        setAutoSaveStatus('saved');
+        setTimeout(() => setAutoSaveStatus(null), 2000);
+      } catch { setAutoSaveStatus(null); }
+    }, 1500);
+  }, []);
+
+  // ── Deleted questions ──
+  const [deletedQuestions, setDeletedQuestions] = useState([]);
+  const [showDeleted, setShowDeleted] = useState(false);
+
+  const loadDeletedQuestions = useCallback(async () => {
     try {
-      const { data } = await axios.post(`${API}/seed?force=true`, {}, { headers });
-      toast.success(data.message);
+      const { data } = await axios.get(`${API}/admin/deleted-questions?limit=50`, { headers });
+      setDeletedQuestions(data.items || []);
+    } catch {}
+  }, []);
+
+  const handleRestoreQuestion = async (q) => {
+    try {
+      await axios.post(`${API}/admin/restore-question/${q.id}`, {}, { headers });
+      toast.success(`تمت استعادة السؤال: "${q.text?.slice(0, 30)}..."`);
+      loadDeletedQuestions();
       loadData();
-    } catch (e) {
-      toast.error("خطأ في إضافة البيانات");
-    } finally {
-      setLoading(false);
-    }
+    } catch { toast.error("خطأ في الاستعادة"); }
   };
 
   const handleSaveQuestion = async () => {
@@ -236,10 +260,14 @@ export default function AdminDashboard() {
   };
 
   const handleDeleteQuestion = async (id) => {
-    if (!window.confirm("تأكيد الحذف؟")) return;
-    await axios.delete(`${API}/questions/${id}`, { headers });
-    setQuestions(questions.filter((q) => q.id !== id));
-    toast.success("تم الحذف");
+    const q = questions.find(qu => qu.id === id);
+    const preview = q?.text?.slice(0, 70) || id;
+    if (!window.confirm(`⚠️ تأكيد الحذف\n\nالسؤال: "${preview}"\n\nيمكن استعادته لاحقاً من "سلة المحذوفات". هل تريد المتابعة؟`)) return;
+    try {
+      await axios.delete(`${API}/questions/${id}`, { headers });
+      setQuestions(questions.filter(qu => qu.id !== id));
+      toast.success("تم الحذف — يمكن استعادته من زر 🗑️ استعادة");
+    } catch { toast.error("خطأ في الحذف"); }
   };
 
   const handleEditQuestion = (q) => {
@@ -528,15 +556,6 @@ export default function AdminDashboard() {
               </button>
             ))}
           <span className="text-secondary/20">|</span>
-          {isSuperAdmin && (
-            <button
-              data-testid="seed-btn"
-              onClick={handleSeed}
-              className="bg-secondary/20 border border-secondary/30 text-secondary text-sm px-4 py-2 rounded-lg hover:bg-secondary/30 transition-all"
-            >
-              إضافة بيانات
-            </button>
-          )}
           <button onClick={() => navigate("/")} className="text-secondary/60 text-sm hover:text-secondary">الرئيسية</button>
           <button onClick={logout} className="text-secondary/60 text-sm hover:text-secondary">خروج</button>
         </div>
@@ -724,6 +743,14 @@ export default function AdminDashboard() {
               <div className="flex items-center gap-3">
                 <span className="text-primary/40 text-sm">{filteredQuestions.length} سؤال</span>
                 <button
+                  data-testid="show-deleted-btn"
+                  onClick={() => { setShowDeleted(v => !v); if (!showDeleted) loadDeletedQuestions(); }}
+                  className="text-sm text-primary/50 hover:text-primary border border-primary/20 hover:border-primary/40 px-3 py-1.5 rounded-lg transition-all font-bold"
+                  title="سلة المحذوفات"
+                >
+                  🗑️ استعادة
+                </button>
+                <button
                   data-testid="add-question-btn"
                   onClick={() => {
                     setEditingQuestion(null);
@@ -736,6 +763,40 @@ export default function AdminDashboard() {
                 </button>
               </div>
             </div>
+
+            {/* ── DELETED QUESTIONS RESTORE PANEL ── */}
+            {showDeleted && (
+              <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="font-black text-amber-800 flex items-center gap-2">
+                    <span>🗑️</span> سلة المحذوفات ({deletedQuestions.length})
+                  </div>
+                  <button onClick={() => setShowDeleted(false)} className="text-amber-600/60 hover:text-amber-700 text-lg">×</button>
+                </div>
+                {deletedQuestions.length === 0 ? (
+                  <div className="text-amber-600/60 text-sm text-center py-4">السلة فارغة</div>
+                ) : (
+                  <div className="space-y-2 max-h-60 overflow-y-auto">
+                    {deletedQuestions.map(q => (
+                      <div key={q.id} data-testid={`deleted-q-${q.id}`}
+                        className="bg-white border border-amber-200 rounded-lg p-3 flex items-center gap-3">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-bold text-primary truncate">{q.text}</p>
+                          <p className="text-xs text-primary/50">إجابة: {q.answer} · حُذف بواسطة: {q.deleted_by || "غير معروف"} · {new Date(q.deleted_at).toLocaleDateString("ar-SA")}</p>
+                        </div>
+                        <button
+                          data-testid={`restore-q-${q.id}`}
+                          onClick={() => handleRestoreQuestion(q)}
+                          className="bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs font-black hover:bg-green-700 transition-all shrink-0"
+                        >
+                          استعادة
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="space-y-2">
               {filteredQuestions.length === 0 ? (
@@ -1770,13 +1831,18 @@ export default function AdminDashboard() {
               </div>
 
               <div>
-                <label className="text-sm font-bold text-primary/70 mb-1 block">
-                  {form.question_type === "secret_word" ? "تعليمات" : "نص السؤال"}
+                <label className="text-sm font-bold text-primary/70 mb-1 flex items-center justify-between">
+                  <span>{form.question_type === "secret_word" ? "تعليمات" : "نص السؤال"}</span>
+                  {autoSaveStatus === 'saving' && <span className="text-xs text-amber-500 font-normal">جاري الحفظ التلقائي...</span>}
+                  {autoSaveStatus === 'saved' && <span className="text-xs text-green-500 font-normal">✓ تم الحفظ</span>}
                 </label>
                 <textarea
                   data-testid="question-text-input"
                   value={form.text}
-                  onChange={(e) => setForm({ ...form, text: e.target.value })}
+                  onChange={(e) => {
+                    setForm({ ...form, text: e.target.value });
+                    if (editingQuestion?.id) triggerAutoSave(editingQuestion.id, { text: e.target.value });
+                  }}
                   placeholder={form.question_type === "secret_word" ? "وصّف هذي الكلمة لفريقك!" : "أدخل نص السؤال"}
                   rows={3}
                   className="w-full border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none resize-none"
@@ -1790,7 +1856,10 @@ export default function AdminDashboard() {
                 <input
                   data-testid="question-answer-input"
                   value={form.answer}
-                  onChange={(e) => setForm({ ...form, answer: e.target.value })}
+                  onChange={(e) => {
+                    setForm({ ...form, answer: e.target.value });
+                    if (editingQuestion?.id) triggerAutoSave(editingQuestion.id, { answer: e.target.value });
+                  }}
                   placeholder={form.question_type === "secret_word" ? "الكلمة السرية" : "الإجابة الصحيحة"}
                   className="w-full border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none"
                 />

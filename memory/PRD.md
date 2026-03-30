@@ -132,7 +132,20 @@ GEMINI_API_KEY (or Emergent LLM Key)
 - Payment v2 endpoints (initiate, verify, activate, renew, failure)
 - Role badge in dashboard header, filtered tabs by role
 
-### Session 14 — Images + Email + Categories (Feb 2026)
+### Session 15 — Data Safety + AI Dedup + Payments (Feb 2026)
+- **CRITICAL FIX: Data Loss Prevention**
+  - Removed "Add Data" seed button from frontend completely
+  - Seed endpoint now NEVER deletes/overwrites — only adds items not already in DB
+  - Removed dangerous `force=True` parameter from seed endpoint
+- **Question Restore System**
+  - Deleted questions backed up to `deleted_questions` collection before removal
+  - "سلة المحذوفات" restore panel in questions tab
+  - Restore any deleted question with one click
+  - Enhanced delete confirmation dialog shows question preview
+- **Auto-Save**: Debounced auto-save (1.5s) for question text and answer fields
+- **AI Deduplication**: AI generation now fetches existing questions and instructs AI not to repeat them
+- **Payment API Keys Configured**: PAYMENT_API_ID=APP_ID_1774162201273, PAYMENT_API_KEY configured in backend .env
+- **New Endpoints**: PATCH /questions/{id}/autosave, GET /admin/deleted-questions, POST /admin/restore-question/{id}
 - **Password Toggle**: Eye icon on Login, Signup (2 fields), AdminLogin pages
 - **Image Zoom Modal**: Click on question/answer images → fullscreen overlay (ZoomIn icon hover)
 - **AI + Unsplash**: image_query field per generated question, auto-fetch from Unsplash in review UI
