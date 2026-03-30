@@ -30,3 +30,4 @@ passlib==1.7.4
 pillow==12.1.1
 python-jose==3.5.0
 qrcode==8.2
+aiosmtplib==5.1.0

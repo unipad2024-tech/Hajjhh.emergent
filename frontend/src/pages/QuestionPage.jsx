@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { useGame } from "@/context/GameContext";
 import { QRCodeSVG } from "qrcode.react";
 import { toast } from "sonner";
+import { X, ZoomIn } from "lucide-react";
 
 export default function QuestionPage() {
   const navigate = useNavigate();
@@ -24,6 +25,7 @@ export default function QuestionPage() {
   const [assigned, setAssigned]       = useState(false);
   const [scoredTeam, setScoredTeam]   = useState(null);
   const [tensionDone, setTensionDone] = useState(false);
+  const [zoomedImage, setZoomedImage] = useState(null);
   const timerRef = useRef(null);
 
   useEffect(() => {
@@ -116,6 +118,28 @@ export default function QuestionPage() {
       className="h-screen flex flex-col overflow-hidden"
       style={{ minHeight: "100svh", background: "radial-gradient(ellipse at top, #3D0810 0%, #1a0205 40%, #0f0102 100%)" }}
     >
+      {/* ── IMAGE ZOOM MODAL ── */}
+      {zoomedImage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm"
+          onClick={() => setZoomedImage(null)}
+        >
+          <div className="relative max-w-5xl max-h-screen p-4">
+            <button
+              className="absolute top-2 right-2 bg-black/60 text-white rounded-full p-2 hover:bg-black/90 transition-colors z-10"
+              onClick={() => setZoomedImage(null)}
+            >
+              <X size={22} />
+            </button>
+            <img
+              src={zoomedImage}
+              alt="zoomed"
+              className="max-w-full max-h-[90vh] object-contain rounded-2xl"
+              style={{ boxShadow: "0 0 60px rgba(0,0,0,0.8)" }}
+            />
+          </div>
+        </div>
+      )}
       {/* ── Top Bar ── */}
       <div className="flex items-center justify-between px-3 md:px-5 py-2 shrink-0 gap-2">
         {/* Back button */}
@@ -260,14 +284,29 @@ export default function QuestionPage() {
             ) : (
               <div className="flex flex-col justify-center flex-1 min-h-0">
                 {question.image_url && (
-                  <img
-                    src={question.image_url}
-                    alt="question"
-                    data-testid="question-image"
-                    className="mx-auto mb-4 object-contain rounded-xl border border-secondary/15"
-                    style={{ maxHeight: "clamp(100px, 20vh, 220px)" }}
-                    onError={e => e.target.style.display = "none"}
-                  />
+                  <div className="relative flex justify-center mb-4 group shrink-0">
+                    <div className="relative inline-block">
+                      <img
+                        src={question.image_url}
+                        alt="question"
+                        data-testid="question-image"
+                        className="object-contain rounded-2xl border-2 border-secondary/20 cursor-zoom-in transition-transform duration-300 hover:scale-[1.02]"
+                        style={{
+                          maxHeight: "clamp(100px, 22vh, 240px)",
+                          maxWidth: "100%",
+                          boxShadow: "0 8px 32px rgba(0,0,0,0.5)"
+                        }}
+                        onClick={() => setZoomedImage(question.image_url)}
+                        onError={e => { e.target.style.display = "none"; e.target.parentElement.style.display = "none"; }}
+                      />
+                      <div
+                        className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/30 rounded-2xl cursor-zoom-in"
+                        onClick={() => setZoomedImage(question.image_url)}
+                      >
+                        <ZoomIn size={32} className="text-white" />
+                      </div>
+                    </div>
+                  </div>
                 )}
                 <p
                   data-testid="question-text"
@@ -296,9 +335,29 @@ export default function QuestionPage() {
             {showAnswer && (
               <div className="mt-4 border-t border-secondary/15 pt-4 shrink-0 animate-slide-up">
                 {question.answer_image_url && (
-                  <img src={question.answer_image_url} alt="answer" data-testid="answer-image"
-                    className="mx-auto mb-3 max-h-24 md:max-h-32 object-contain rounded-xl"
-                    onError={e => e.target.style.display = "none"} />
+                  <div className="relative flex justify-center mb-4 group">
+                    <div className="relative inline-block">
+                      <img
+                        src={question.answer_image_url}
+                        alt="answer"
+                        data-testid="answer-image"
+                        className="object-contain rounded-xl border-2 border-secondary/20 cursor-zoom-in transition-transform duration-300 hover:scale-[1.02]"
+                        style={{
+                          maxHeight: "clamp(80px, 16vh, 160px)",
+                          maxWidth: "100%",
+                          boxShadow: "0 4px 20px rgba(0,0,0,0.4)"
+                        }}
+                        onClick={() => setZoomedImage(question.answer_image_url)}
+                        onError={e => { e.target.style.display = "none"; e.target.parentElement.style.display = "none"; }}
+                      />
+                      <div
+                        className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/30 rounded-xl cursor-zoom-in"
+                        onClick={() => setZoomedImage(question.answer_image_url)}
+                      >
+                        <ZoomIn size={24} className="text-white" />
+                      </div>
+                    </div>
+                  </div>
                 )}
                 <div className="text-secondary/50 text-xs text-center uppercase tracking-widest mb-1">الإجابة</div>
                 <div

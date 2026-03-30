@@ -3,13 +3,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
-import os, logging, uuid, random, shutil, re, json, httpx
+import os, logging, uuid, random, shutil, re, json, httpx, asyncio
 from pathlib import Path
 from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional, Dict
 from datetime import datetime, timezone, timedelta
 from jose import jwt, JWTError
 from passlib.context import CryptContext
+import aiosmtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from emergentintegrations.payments.stripe.checkout import (
     StripeCheckout, CheckoutSessionRequest, CheckoutSessionResponse, CheckoutStatusResponse
 )
@@ -34,6 +37,9 @@ ADMIN_PASSWORD  = os.environ.get('ADMIN_PASSWORD', 'hujjah2024')
 STRIPE_API_KEY  = os.environ.get('STRIPE_API_KEY', '')
 PAYMENT_API_ID  = os.environ.get('PAYMENT_API_ID', '')
 PAYMENT_API_KEY = os.environ.get('PAYMENT_API_KEY', '')
+EMAIL_USER      = os.environ.get('EMAIL_USER', '')
+EMAIL_PASS      = os.environ.get('EMAIL_PASS', '')
+UNSPLASH_API_KEY = os.environ.get('UNSPLASH_API_KEY', '')
 ALGORITHM       = "HS256"
 
 pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -82,6 +88,20 @@ class GiftSubscription(BaseModel):
     plan_id: str = "monthly"
     days: Optional[int] = None
 
+class CategoryGroup(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    icon: str = ""
+    color: str = "#5B0E14"
+    order: int = 0
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+class CategoryGroupCreate(BaseModel):
+    name: str
+    icon: str = ""
+    color: str = "#5B0E14"
+    order: int = 0
+
 class Category(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
@@ -93,6 +113,7 @@ class Category(BaseModel):
     is_active: bool = True
     color: str = "#5B0E14"
     order: int = 0
+    group_id: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 class CategoryCreate(BaseModel):
@@ -105,6 +126,7 @@ class CategoryCreate(BaseModel):
     is_active: bool = True
     color: str = "#5B0E14"
     order: int = 0
+    group_id: Optional[str] = None
 
 class Question(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -1933,12 +1955,13 @@ async def ai_generate_questions(body: dict, admin=Depends(get_admin)):
         f"أنشئ بالضبط {count} سؤال ترفيهي لفئة \"{cat_name}\" بمستوى ({diff_label}).\n"
         f"{custom_instruction}\n"
         "شروط أساسية:\n"
-        "- اكتب باللغة العربية الفصيحة أو العامية السعودية\n"
+        "- اكتب الأسئلة والإجابات باللغة العربية\n"
         "- الأسئلة حماسية، متنوعة، وغير متكررة\n"
         "- الإجابة قصيرة جداً: كلمة أو كلمتان فقط\n"
-        "- لا تُضِف أي شرح أو ترقيم خارج الـ JSON\n\n"
+        "- لا تُضِف أي شرح أو ترقيم خارج الـ JSON\n"
+        "- image_query: جملة قصيرة بالإنجليزية لاستخدامها في البحث عن صورة ذات صلة (للإجابة أو السؤال)\n\n"
         "أرجع JSON array فقط بالشكل التالي وبدون أي نص قبله أو بعده:\n"
-        '[{"text":"نص السؤال؟","answer":"الإجابة"},{"text":"سؤال آخر؟","answer":"إجابة"}]'
+        '[{"text":"نص السؤال؟","answer":"الإجابة","image_query":"english search query"}]'
     )
 
     raw_text = await _gemini_generate(prompt)
@@ -1954,6 +1977,7 @@ async def ai_generate_questions(body: dict, admin=Depends(get_admin)):
     for q in raw_list[:count]:
         txt = (q.get("text") or "").strip()
         ans = (q.get("answer") or "").strip()
+        img_query = (q.get("image_query") or "").strip()
         if txt and ans:
             questions.append({
                 "id":               str(uuid.uuid4()),
@@ -1961,6 +1985,7 @@ async def ai_generate_questions(body: dict, admin=Depends(get_admin)):
                 "difficulty":       difficulty,
                 "text":             txt,
                 "answer":           ans,
+                "image_query":      img_query,
                 "image_url":        "",
                 "answer_image_url": "",
                 "question_type":    "text",
@@ -2213,7 +2238,8 @@ async def gift_subscription(user_id: str, body: GiftSubscription, admin: dict = 
     expires = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
     await db.users.update_one(
         {"id": user_id},
-        {"$set": {"subscription_type": "premium", "subscription_expires_at": expires}}
+        {"$set": {"subscription_type": "premium", "subscription_expires_at": expires,
+                  "notify_warning_sent": False, "notify_expired_sent": False}}
     )
     txn = {
         "id": str(uuid.uuid4()),
@@ -2233,6 +2259,237 @@ async def gift_subscription(user_id: str, body: GiftSubscription, admin: dict = 
                            f"مدة {days} يوم حتى {expires[:10]}")
     return {"message": f"تم منح الاشتراك المميز لـ {days} يوم", "expires_at": expires, "user": user}
 
+# ══════════════════════════════════════════════════════════════════════════════
+# EMAIL NOTIFICATION SYSTEM
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def send_email_notification(to_email: str, subject: str, html_body: str) -> bool:
+    """Send email via Gmail SMTP. Returns True on success."""
+    if not EMAIL_USER or not EMAIL_PASS:
+        logger.warning("Email credentials not configured — skipping email send")
+        return False
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["From"]    = f"Hujjah Game <{EMAIL_USER}>"
+        msg["To"]      = to_email
+        msg["Subject"] = subject
+        msg.attach(MIMEText(html_body, "html", "utf-8"))
+        await aiosmtplib.send(
+            msg,
+            hostname="smtp.gmail.com",
+            port=587,
+            start_tls=True,
+            username=EMAIL_USER,
+            password=EMAIL_PASS.replace(" ", ""),  # strip spaces from app password
+        )
+        logger.info(f"Email sent to {to_email}: {subject}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to send email to {to_email}: {e}")
+        return False
+
+def build_warning_email(username: str, expires_at: str) -> str:
+    exp_date = expires_at[:10] if expires_at else ""
+    return f"""
+    <div dir="rtl" style="font-family:Arial,sans-serif;max-width:520px;margin:auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.1)">
+      <div style="background:linear-gradient(135deg,#5B0E14,#8B1520);padding:32px;text-align:center">
+        <h1 style="color:#F1E194;margin:0;font-size:2rem">حُجّة</h1>
+        <p style="color:rgba(241,225,148,0.7);margin:8px 0 0">لعبة المعلومات العربية</p>
+      </div>
+      <div style="padding:32px">
+        <h2 style="color:#5B0E14;margin:0 0 16px">مرحباً {username} 👋</h2>
+        <p style="color:#444;line-height:1.7;font-size:1rem">
+          اشتراكك المميز في <strong>حُجّة</strong> سينتهي قريباً بتاريخ <strong>{exp_date}</strong>.
+        </p>
+        <p style="color:#444;line-height:1.7">
+          جدّد اشتراكك الآن للاستمرار في الاستمتاع بجميع الفئات المميزة دون انقطاع.
+        </p>
+        <div style="text-align:center;margin:28px 0">
+          <a href="https://hujjah-trivia.preview.emergentagent.com/pricing"
+             style="background:#F1E194;color:#5B0E14;padding:14px 32px;border-radius:50px;text-decoration:none;font-weight:900;font-size:1.1rem">
+            جدّد الاشتراك
+          </a>
+        </div>
+        <p style="color:#888;font-size:0.85rem;text-align:center">
+          إذا كنت لا ترغب في هذه الرسائل يمكنك تجاهلها.
+        </p>
+      </div>
+    </div>
+    """
+
+def build_expired_email(username: str) -> str:
+    return f"""
+    <div dir="rtl" style="font-family:Arial,sans-serif;max-width:520px;margin:auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.1)">
+      <div style="background:linear-gradient(135deg,#5B0E14,#8B1520);padding:32px;text-align:center">
+        <h1 style="color:#F1E194;margin:0;font-size:2rem">حُجّة</h1>
+        <p style="color:rgba(241,225,148,0.7);margin:8px 0 0">لعبة المعلومات العربية</p>
+      </div>
+      <div style="padding:32px">
+        <h2 style="color:#5B0E14;margin:0 0 16px">مرحباً {username} 👋</h2>
+        <p style="color:#444;line-height:1.7;font-size:1rem">
+          انتهى اشتراكك المميز في <strong>حُجّة</strong>.
+        </p>
+        <p style="color:#444;line-height:1.7">
+          يمكنك تجديد اشتراكك في أي وقت للعودة إلى الوصول الكامل لجميع الفئات والمحتوى المميز.
+        </p>
+        <div style="text-align:center;margin:28px 0">
+          <a href="https://hujjah-trivia.preview.emergentagent.com/pricing"
+             style="background:#F1E194;color:#5B0E14;padding:14px 32px;border-radius:50px;text-decoration:none;font-weight:900;font-size:1.1rem">
+            اشترك مجدداً
+          </a>
+        </div>
+      </div>
+    </div>
+    """
+
+async def check_subscription_notifications():
+    """Check all premium users and send expiry notification emails."""
+    now = datetime.now(timezone.utc)
+    three_days_later = now + timedelta(days=3)
+    try:
+        premium_users = await db.users.find(
+            {"subscription_type": "premium", "subscription_expires_at": {"$exists": True, "$ne": None}},
+            {"_id": 0, "id": 1, "email": 1, "username": 1,
+             "subscription_expires_at": 1, "notify_warning_sent": 1, "notify_expired_sent": 1}
+        ).to_list(1000)
+
+        for user in premium_users:
+            exp_str = user.get("subscription_expires_at", "")
+            if not exp_str or not user.get("email"):
+                continue
+            try:
+                exp_dt = datetime.fromisoformat(exp_str)
+            except Exception:
+                continue
+
+            if now < exp_dt <= three_days_later and not user.get("notify_warning_sent"):
+                # Warning: expires within 3 days
+                sent = await send_email_notification(
+                    user["email"],
+                    "⚠️ اشتراكك في حُجّة سينتهي قريباً",
+                    build_warning_email(user.get("username", ""), exp_str)
+                )
+                if sent:
+                    await db.users.update_one({"id": user["id"]}, {"$set": {"notify_warning_sent": True}})
+
+            elif exp_dt <= now and not user.get("notify_expired_sent"):
+                # Expired
+                sent = await send_email_notification(
+                    user["email"],
+                    "❌ انتهى اشتراكك المميز في حُجّة",
+                    build_expired_email(user.get("username", ""))
+                )
+                if sent:
+                    await db.users.update_one(
+                        {"id": user["id"]},
+                        {"$set": {"notify_expired_sent": True, "subscription_type": "free"}}
+                    )
+
+        logger.info(f"Subscription check complete — processed {len(premium_users)} users")
+    except Exception as e:
+        logger.error(f"Subscription check error: {e}")
+
+@api_router.post("/admin/trigger-subscription-check")
+async def trigger_subscription_check(_: dict = Depends(get_super_admin)):
+    """Manually trigger subscription expiry check (for testing)."""
+    await check_subscription_notifications()
+    return {"message": "تم تشغيل فحص الاشتراكات"}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# UNSPLASH IMAGE SEARCH
+# ══════════════════════════════════════════════════════════════════════════════
+
+@api_router.get("/unsplash/search")
+async def unsplash_search(query: str, admin: dict = Depends(get_admin)):
+    """Fetch a relevant image from Unsplash for a given search query."""
+    if not UNSPLASH_API_KEY:
+        raise HTTPException(503, "Unsplash API key not configured")
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(
+                "https://api.unsplash.com/search/photos",
+                params={"query": query, "per_page": 3, "client_id": UNSPLASH_API_KEY,
+                        "orientation": "landscape"}
+            )
+            data = resp.json()
+            results = data.get("results", [])
+            if results:
+                photo = results[0]
+                return {
+                    "url": photo["urls"]["small"],
+                    "regular_url": photo["urls"]["regular"],
+                    "thumb_url": photo["urls"]["thumb"],
+                    "credit_name": photo["user"]["name"],
+                    "credit_link": photo["user"]["links"]["html"],
+                    "alt": photo.get("alt_description") or query,
+                }
+        return {"url": None, "regular_url": None, "thumb_url": None}
+    except Exception as e:
+        logger.error(f"Unsplash error: {e}")
+        return {"url": None, "regular_url": None, "thumb_url": None}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CATEGORY GROUPS
+# ══════════════════════════════════════════════════════════════════════════════
+
+DEFAULT_GROUPS = [
+    {"name": "علمي",        "icon": "🔬", "color": "#1e40af", "order": 1},
+    {"name": "ثقافة عامة",  "icon": "🌍", "color": "#065f46", "order": 2},
+    {"name": "رياضة",       "icon": "⚽", "color": "#92400e", "order": 3},
+    {"name": "تاريخ",       "icon": "📜", "color": "#7c2d12", "order": 4},
+    {"name": "جغرافيا",     "icon": "🗺️", "color": "#1e3a5f", "order": 5},
+    {"name": "دين",         "icon": "☪️", "color": "#166534", "order": 6},
+    {"name": "تكنولوجيا",   "icon": "💻", "color": "#1e1b4b", "order": 7},
+    {"name": "ترفيه",       "icon": "🎬", "color": "#7c1d68", "order": 8},
+    {"name": "مسلسلات",     "icon": "📺", "color": "#991b1b", "order": 9},
+    {"name": "أنمي",        "icon": "🎌", "color": "#92400e", "order": 10},
+]
+
+@api_router.get("/category-groups")
+async def list_category_groups():
+    groups = await db.category_groups.find({}, {"_id": 0}).sort("order", 1).to_list(100)
+    return groups
+
+@api_router.post("/category-groups")
+async def create_category_group(body: CategoryGroupCreate, admin: dict = Depends(get_admin)):
+    group = CategoryGroup(**body.model_dump())
+    await db.category_groups.insert_one(group.model_dump())
+    await log_admin_action(admin, "إضافة", "مجموعة فئات", group.name)
+    return {k: v for k, v in group.model_dump().items() if k != "_id"}
+
+@api_router.put("/category-groups/{group_id}")
+async def update_category_group(group_id: str, body: CategoryGroupCreate, admin: dict = Depends(get_admin)):
+    upd = {**body.model_dump(), "updated_at": datetime.now(timezone.utc).isoformat()}
+    res = await db.category_groups.find_one_and_update(
+        {"id": group_id}, {"$set": upd}, {"_id": 0}, return_document=True
+    )
+    if not res: raise HTTPException(404, "المجموعة غير موجودة")
+    await log_admin_action(admin, "تعديل", "مجموعة فئات", res.get("name", group_id))
+    return res
+
+@api_router.delete("/category-groups/{group_id}")
+async def delete_category_group(group_id: str, admin: dict = Depends(get_super_admin)):
+    group = await db.category_groups.find_one({"id": group_id}, {"_id": 0})
+    if not group: raise HTTPException(404, "المجموعة غير موجودة")
+    # Un-assign categories from this group
+    await db.categories.update_many({"group_id": group_id}, {"$set": {"group_id": None}})
+    await db.category_groups.delete_one({"id": group_id})
+    await log_admin_action(admin, "حذف", "مجموعة فئات", group.get("name", group_id))
+    return {"message": "تم الحذف"}
+
+@api_router.post("/admin/seed-category-groups")
+async def seed_category_groups(_: dict = Depends(get_super_admin)):
+    """Seed default category groups if none exist."""
+    count = await db.category_groups.count_documents({})
+    if count > 0:
+        return {"message": "المجموعات موجودة مسبقاً", "count": count}
+    added = 0
+    for g in DEFAULT_GROUPS:
+        grp = CategoryGroup(**g)
+        await db.category_groups.insert_one(grp.model_dump())
+        added += 1
+    return {"message": f"تمت إضافة {added} مجموعة", "added": added}
+
 app.include_router(api_router)
 app.add_middleware(
     CORSMiddleware,
@@ -2241,6 +2498,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+async def _subscription_daily_loop():
+    """Run subscription expiry check every 24 hours."""
+    await asyncio.sleep(30)  # Wait 30s after startup before first run
+    while True:
+        try:
+            await check_subscription_notifications()
+        except Exception as e:
+            logger.error(f"Daily subscription loop error: {e}")
+        await asyncio.sleep(86400)  # 24 hours
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(_subscription_daily_loop())
+    logger.info("Subscription notification loop started")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

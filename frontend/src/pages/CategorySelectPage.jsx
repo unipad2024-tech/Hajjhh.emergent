@@ -12,30 +12,33 @@ export default function CategorySelectPage() {
   const { session, updateSession, saveSession, currentUser, darkMode, refreshUser, userToken } = useGame();
 
   const [categories, setCategories]       = useState([]);
+  const [categoryGroups, setCategoryGroups] = useState([]);
   const [freeData, setFreeData]           = useState(null);
   const [selected, setSelected]           = useState({ team1: [], team2: [] });
   const [step, setStep]                   = useState(1);   // 1 = team1, 2 = team2
   const [loading, setLoading]             = useState(false);
+  const [activeGroupId, setActiveGroupId] = useState("all");
 
   const isPremiumUser = currentUser?.subscription_type === "premium";
   const NEEDED = 3;
 
   useEffect(() => {
     if (!session) { navigate("/setup"); return; }
-    if (userToken) refreshUser(); // refresh subscription status in case admin updated it
+    if (userToken) refreshUser();
     loadCategories();
   }, []); // eslint-disable-line
 
   const loadCategories = async () => {
-    const [allRes, freeRes] = await Promise.all([
+    const [allRes, freeRes, groupsRes] = await Promise.all([
       axios.get(`${API}/categories`),
       axios.get(`${API}/free-categories`),
+      axios.get(`${API}/category-groups`),
     ]);
     setCategories(allRes.data);
     setFreeData(freeRes.data);
+    setCategoryGroups(groupsRes.data || []);
 
     if (!isPremiumUser) {
-      // Auto-assign trial categories for free users
       setSelected({
         team1: freeRes.data.trial_team1_categories || [],
         team2: freeRes.data.trial_team2_categories || [],
@@ -187,13 +190,50 @@ export default function CategorySelectPage() {
 
       {/* Category Grid */}
       <div className="flex-1 px-3 pb-4 overflow-y-auto">
+        {/* Group Filter Tabs */}
+        {categoryGroups.length > 0 && (
+          <div className="flex gap-2 flex-wrap mb-4 px-1">
+            <button
+              data-testid="group-filter-all"
+              onClick={() => setActiveGroupId("all")}
+              className={`px-3 py-1.5 rounded-full text-sm font-bold transition-all border ${
+                activeGroupId === "all"
+                  ? "bg-primary text-secondary border-primary"
+                  : "bg-white/10 text-secondary/70 border-secondary/20 hover:border-secondary/50"
+              }`}
+            >
+              الكل ({categories.length})
+            </button>
+            {categoryGroups.map(g => {
+              const count = categories.filter(c => c.group_id === g.id).length;
+              if (count === 0) return null;
+              return (
+                <button
+                  key={g.id}
+                  data-testid={`group-filter-${g.id}`}
+                  onClick={() => setActiveGroupId(g.id)}
+                  className={`px-3 py-1.5 rounded-full text-sm font-bold transition-all border ${
+                    activeGroupId === g.id
+                      ? "text-white border-transparent"
+                      : "bg-white/10 text-secondary/70 border-secondary/20 hover:border-secondary/50"
+                  }`}
+                  style={activeGroupId === g.id ? { background: g.color, borderColor: g.color } : {}}
+                >
+                  {g.icon} {g.name} ({count})
+                </button>
+              );
+            })}
+          </div>
+        )}
         <div
           className="grid gap-4"
           style={{
             gridTemplateColumns: "repeat(auto-fill, minmax(clamp(160px, 20vw, 240px), 1fr))",
           }}
         >
-          {categories.map(cat => {
+          {categories
+            .filter(cat => activeGroupId === "all" || cat.group_id === activeGroupId)
+            .map(cat => {
             const isLockedPremium = cat.is_premium && !isPremiumUser;
             const isSelectedForCurrent = activeSel.includes(cat.id);
             const isSelectedForOther   = otherTeamSel.includes(cat.id);
@@ -329,8 +369,6 @@ export default function CategorySelectPage() {
           })}
         </div>
       </div>
-
-      {/* Footer */}
       <div className="shrink-0 px-4 pb-5 pt-3 border-t" style={{ borderColor: darkMode ? "rgba(120,170,90,0.2)" : "rgba(0,0,0,0.08)" }}>
         {isPremiumUser ? (
           <div className="flex gap-3">

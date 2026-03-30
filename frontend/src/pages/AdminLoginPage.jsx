@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "sonner";
+import { Eye, EyeOff } from "lucide-react";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -12,6 +13,7 @@ export default function AdminLoginPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showPw, setShowPw] = useState(false);
 
   const handleLogin = async () => {
     if (!password.trim()) { toast.error("أدخل كلمة المرور"); return; }
@@ -58,15 +60,25 @@ export default function AdminLoginPage() {
             onKeyDown={(e) => e.key === "Enter" && handleLogin()}
           />
 
-          <input
-            data-testid="admin-password-input"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="كلمة المرور"
-            className="w-full bg-primary-dark/50 border-2 border-secondary/30 focus:border-secondary text-secondary placeholder:text-secondary/30 px-4 py-3 rounded-xl text-lg font-bold outline-none transition-all text-center mb-4"
-            onKeyDown={(e) => e.key === "Enter" && handleLogin()}
-          />
+          <div className="relative mb-4">
+            <input
+              data-testid="admin-password-input"
+              type={showPw ? "text" : "password"}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="كلمة المرور"
+              className="w-full bg-primary-dark/50 border-2 border-secondary/30 focus:border-secondary text-secondary placeholder:text-secondary/30 px-4 py-3 pl-12 rounded-xl text-lg font-bold outline-none transition-all text-center"
+              onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+            />
+            <button
+              type="button"
+              data-testid="admin-pw-toggle"
+              onClick={() => setShowPw(v => !v)}
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-secondary/40 hover:text-secondary/80 transition-colors"
+            >
+              {showPw ? <EyeOff size={18} /> : <Eye size={18} />}
+            </button>
+          </div>
 
           <button
             data-testid="admin-login-btn"

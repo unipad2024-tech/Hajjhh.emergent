@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { toast } from "sonner";
 import { useGame } from "@/context/GameContext";
+import { Eye, EyeOff } from "lucide-react";
 
 const DARK_BG = { background: "radial-gradient(ellipse at top, #3D0810 0%, #1a0205 40%, #0f0102 100%)" };
 
@@ -10,6 +11,7 @@ export default function LoginPage() {
   const { loginUser } = useGame();
   const [form, setForm] = useState({ email: "", password: "" });
   const [loading, setLoading] = useState(false);
+  const [showPw, setShowPw] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -31,7 +33,6 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center px-4" style={DARK_BG}>
-      {/* ambient glow */}
       <div className="pointer-events-none fixed inset-0 overflow-hidden">
         <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-96 h-96 bg-secondary/5 blur-3xl rounded-full"/>
       </div>
@@ -46,10 +47,7 @@ export default function LoginPage() {
 
         <div className="bg-primary/60 border border-secondary/25 rounded-3xl p-8 backdrop-blur-sm">
           <div className="text-center mb-8">
-            <h1
-              className="font-black text-secondary text-5xl mb-2"
-              style={{ fontFamily: "Cairo, sans-serif", textShadow: "0 0 30px rgba(241,225,148,0.4)" }}
-            >
+            <h1 className="font-black text-secondary text-5xl mb-2" style={{ fontFamily: "Cairo, sans-serif", textShadow: "0 0 30px rgba(241,225,148,0.4)" }}>
               حُجّة
             </h1>
             <p className="text-secondary/60 text-sm">سجّل دخولك وانطلق</p>
@@ -71,14 +69,24 @@ export default function LoginPage() {
 
             <div>
               <label className="text-secondary/70 text-xs font-bold block mb-1">كلمة المرور</label>
-              <input
-                data-testid="login-password-input"
-                type="password"
-                value={form.password}
-                onChange={(e) => setForm({ ...form, password: e.target.value })}
-                placeholder="••••••••"
-                className="w-full bg-black/30 border-2 border-secondary/20 focus:border-secondary text-secondary placeholder:text-secondary/25 px-4 py-3 rounded-xl outline-none transition-all text-right"
-              />
+              <div className="relative">
+                <input
+                  data-testid="login-password-input"
+                  type={showPw ? "text" : "password"}
+                  value={form.password}
+                  onChange={(e) => setForm({ ...form, password: e.target.value })}
+                  placeholder="••••••••"
+                  className="w-full bg-black/30 border-2 border-secondary/20 focus:border-secondary text-secondary placeholder:text-secondary/25 px-4 py-3 pr-12 rounded-xl outline-none transition-all text-right"
+                />
+                <button
+                  type="button"
+                  data-testid="login-pw-toggle"
+                  onClick={() => setShowPw(v => !v)}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-secondary/40 hover:text-secondary/80 transition-colors"
+                >
+                  {showPw ? <EyeOff size={18} /> : <Eye size={18} />}
+                </button>
+              </div>
             </div>
 
             <button
@@ -94,11 +102,7 @@ export default function LoginPage() {
 
           <div className="text-center mt-6 text-secondary/50 text-sm">
             ما عندك حساب؟{" "}
-            <Link
-              data-testid="signup-link"
-              to="/signup"
-              className="text-secondary hover:text-secondary/80 font-bold underline"
-            >
+            <Link data-testid="signup-link" to="/signup" className="text-secondary hover:text-secondary/80 font-bold underline">
               سجّل الحين
             </Link>
           </div>

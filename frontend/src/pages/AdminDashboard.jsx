@@ -62,14 +62,21 @@ export default function AdminDashboard() {
   // AI Generator state
   const [aiCatId, setAiCatId] = useState("");
   const [aiDiff, setAiDiff] = useState(300);
-  const [aiCount, setAiCount] = useState(10);
+  const [aiCount, setAiCount] = useState(12);
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiGenerating, setAiGenerating] = useState(false);
   const [aiQuestions, setAiQuestions] = useState([]);
   const [aiSaving, setAiSaving] = useState(false);
+  const [aiFetchingImages, setAiFetchingImages] = useState(false);
+
+  // Category groups
+  const [categoryGroups, setCategoryGroups] = useState([]);
+  const [showGroupForm, setShowGroupForm] = useState(false);
+  const [groupForm, setGroupForm] = useState({ name: "", icon: "", color: "#5B0E14", order: 0 });
+  const [editingGroup, setEditingGroup] = useState(null);
 
   // New category form
-  const [catForm, setCatForm] = useState({ name: "", icon: "", description: "", is_special: false, is_premium: false, is_active: true, color: "#5B0E14", image_url: "" });
+  const [catForm, setCatForm] = useState({ name: "", icon: "", description: "", is_special: false, is_premium: false, is_active: true, color: "#5B0E14", image_url: "", group_id: "" });
   const [showCatForm, setShowCatForm] = useState(false);
   const [editingCat, setEditingCat] = useState(null);
 
@@ -98,12 +105,14 @@ export default function AdminDashboard() {
   };
 
   const loadData = useCallback(async () => {
-    const [catsRes, qsRes] = await Promise.all([
+    const [catsRes, qsRes, groupsRes] = await Promise.all([
       axios.get(`${API}/categories?show_inactive=true`),
       axios.get(`${API}/questions`),
+      axios.get(`${API}/category-groups`),
     ]);
     setCategories(catsRes.data);
     setQuestions(qsRes.data);
+    setCategoryGroups(groupsRes.data || []);
     if (!selectedCat && catsRes.data.length > 0) setSelectedCat(catsRes.data[0].id);
   }, [selectedCat]);
 
@@ -309,6 +318,28 @@ export default function AdminDashboard() {
     } catch { toast.error("خطأ في الحفظ"); }
   };
 
+  const fetchUnsplashForQuestion = async (imageQuery, questionIndex) => {
+    if (!imageQuery) return;
+    try {
+      const { data } = await axios.get(
+        `${API}/unsplash/search?query=${encodeURIComponent(imageQuery)}`,
+        { headers }
+      );
+      if (data.url) {
+        setAiQuestions(prev => {
+          const updated = [...prev];
+          updated[questionIndex] = {
+            ...updated[questionIndex],
+            image_url: data.regular_url || data.url,
+            _img_thumb: data.url,
+            _img_credit: data.credit_name,
+          };
+          return updated;
+        });
+      }
+    } catch {}
+  };
+
   const handleAiGenerate = async () => {
     if (!aiCatId) { toast.error("اختر الفئة أولاً"); return; }
     setAiGenerating(true);
@@ -321,7 +352,14 @@ export default function AdminDashboard() {
         prompt_description: aiPrompt.trim() || undefined,
       }, { headers });
       setAiQuestions(data.questions);
-      toast.success(`تم توليد ${data.count} سؤال!`);
+      toast.success(`تم توليد ${data.count} سؤال! جاري جلب الصور...`);
+      // Fetch Unsplash images in parallel
+      setAiFetchingImages(true);
+      await Promise.allSettled(
+        data.questions.map((q, i) => fetchUnsplashForQuestion(q.image_query, i))
+      );
+      setAiFetchingImages(false);
+      toast.success("جاهز! راجع الأسئلة والصور");
     } catch (e) {
       toast.error(e?.response?.data?.detail || "خطأ في التوليد");
     } finally {
@@ -333,7 +371,8 @@ export default function AdminDashboard() {
     if (!aiQuestions.length) return;
     setAiSaving(true);
     try {
-      const { data } = await axios.post(`${API}/ai/save-questions`, { questions: aiQuestions }, { headers });
+      const questionsToSave = aiQuestions.map(({ _img_thumb, _img_credit, ...q }) => q);
+      const { data } = await axios.post(`${API}/ai/save-questions`, { questions: questionsToSave }, { headers });
       toast.success(data.message);
       setAiQuestions([]);
       const { data: qs } = await axios.get(`${API}/questions`);
@@ -394,6 +433,33 @@ export default function AdminDashboard() {
       await axios.delete(`${API}/admin/staff/${staffId}`, { headers });
       toast.success("تم الحذف");
       loadStaff();
+    } catch { toast.error("خطأ في الحذف"); }
+  };
+
+  // ── Category Group Handlers ──
+  const handleSaveGroup = async () => {
+    if (!groupForm.name.trim()) { toast.error("اسم المجموعة مطلوب"); return; }
+    try {
+      if (editingGroup) {
+        await axios.put(`${API}/category-groups/${editingGroup.id}`, groupForm, { headers });
+        toast.success("تم تحديث المجموعة");
+      } else {
+        await axios.post(`${API}/category-groups`, groupForm, { headers });
+        toast.success("تم إضافة المجموعة");
+      }
+      setShowGroupForm(false);
+      setEditingGroup(null);
+      setGroupForm({ name: "", icon: "", color: "#5B0E14", order: 0 });
+      loadData();
+    } catch (e) { toast.error(e?.response?.data?.detail || "خطأ في الحفظ"); }
+  };
+
+  const handleDeleteGroup = async (groupId) => {
+    if (!window.confirm("حذف المجموعة؟ الفئات المرتبطة بها ستصبح بدون مجموعة.")) return;
+    try {
+      await axios.delete(`${API}/category-groups/${groupId}`, { headers });
+      toast.success("تم الحذف");
+      loadData();
     } catch { toast.error("خطأ في الحذف"); }
   };
 
@@ -480,7 +546,7 @@ export default function AdminDashboard() {
       {activeTab === "questions" && (
         <div className="flex">
           {/* Sidebar - Categories */}
-          <div className="w-56 bg-primary/5 border-l border-primary/10 min-h-screen p-4">
+          <div className="w-64 bg-primary/5 border-l border-primary/10 min-h-screen p-4 flex flex-col">
             <div className="flex items-center justify-between mb-3">
               <span className="font-black text-sm text-primary/60 uppercase tracking-widest">الفئات</span>
               <button
@@ -488,44 +554,140 @@ export default function AdminDashboard() {
                 onClick={() => setShowCatForm(true)}
                 className="text-primary bg-secondary/80 rounded-lg px-2 py-1 text-xs font-bold hover:bg-secondary transition-all"
               >
-                + جديد
+                + جديدة
               </button>
             </div>
-            <div className="space-y-1">
-              {categories.map((cat) => (
-                <div
-                  key={cat.id}
-                  className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition-all ${selectedCat === cat.id ? "bg-primary text-secondary" : "hover:bg-primary/10"}`}
-                  style={{ opacity: cat.is_active === false ? 0.45 : 1 }}
-                  onClick={() => setSelectedCat(cat.id)}
-                >
-                  <div className="flex items-center gap-2">
-                    <span>{cat.icon || CATEGORY_ICONS[cat.id] || "🎯"}</span>
-                    <span className="text-sm font-bold truncate">{cat.name}</span>
-                    {cat.is_premium && <span className="text-yellow-500 text-xs">⭐</span>}
-                    {cat.is_active === false && <span className="text-red-400 text-xs">●</span>}
-                  </div>
-                  <button
-                    data-testid={`edit-cat-${cat.id}`}
-                    onClick={(e) => { e.stopPropagation(); handleEditCat(cat); }}
-                    className="text-primary/40 hover:text-primary/70 text-xs px-1"
-                    title="تعديل"
-                  >
-                    ✎
-                  </button>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleDeleteCat(cat.id); }}
-                    className="text-red-400/50 hover:text-red-400 text-xs"
-                  >
-                    ×
-                  </button>
+
+            {/* Group filter */}
+            {categoryGroups.length > 0 && (
+              <div className="mb-3">
+                <div className="flex flex-wrap gap-1">
+                  {categoryGroups.map(g => {
+                    const count = categories.filter(c => c.group_id === g.id).length;
+                    if (count === 0) return null;
+                    return (
+                      <span key={g.id} className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary/60 font-bold cursor-default">
+                        {g.icon} {g.name} ({count})
+                      </span>
+                    );
+                  })}
                 </div>
-              ))}
+              </div>
+            )}
+
+            <div className="space-y-1 flex-1 overflow-y-auto">
+              {/* Group categories by group_id */}
+              {categoryGroups.length > 0 ? (
+                <>
+                  {categoryGroups.map(group => {
+                    const groupCats = categories.filter(c => c.group_id === group.id);
+                    if (groupCats.length === 0) return null;
+                    return (
+                      <div key={group.id}>
+                        <div className="text-[10px] font-black text-primary/40 uppercase tracking-widest px-1 pt-2 pb-1 flex items-center gap-1">
+                          <span>{group.icon}</span> {group.name}
+                        </div>
+                        {groupCats.map(cat => (
+                          <div key={cat.id}
+                            className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition-all ${selectedCat === cat.id ? "bg-primary text-secondary" : "hover:bg-primary/10"}`}
+                            style={{ opacity: cat.is_active === false ? 0.45 : 1 }}
+                            onClick={() => setSelectedCat(cat.id)}>
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="shrink-0">{cat.icon || "🎯"}</span>
+                              <span className="text-xs font-bold truncate">{cat.name}</span>
+                              {cat.is_premium && <span className="text-yellow-500 text-[10px]">⭐</span>}
+                              {cat.is_active === false && <span className="text-red-400 text-[10px]">●</span>}
+                            </div>
+                            <div className="flex shrink-0">
+                              <button data-testid={`edit-cat-${cat.id}`}
+                                onClick={(e) => { e.stopPropagation(); handleEditCat(cat); }}
+                                className="text-primary/40 hover:text-primary/70 text-xs px-1">✎</button>
+                              <button onClick={(e) => { e.stopPropagation(); handleDeleteCat(cat.id); }}
+                                className="text-red-400/50 hover:text-red-400 text-xs">×</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })}
+                  {/* Ungrouped */}
+                  {categories.filter(c => !c.group_id).length > 0 && (
+                    <div>
+                      <div className="text-[10px] font-black text-primary/40 uppercase tracking-widest px-1 pt-2 pb-1">بدون مجموعة</div>
+                      {categories.filter(c => !c.group_id).map(cat => (
+                        <div key={cat.id}
+                          className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition-all ${selectedCat === cat.id ? "bg-primary text-secondary" : "hover:bg-primary/10"}`}
+                          style={{ opacity: cat.is_active === false ? 0.45 : 1 }}
+                          onClick={() => setSelectedCat(cat.id)}>
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="shrink-0">{cat.icon || "🎯"}</span>
+                            <span className="text-xs font-bold truncate">{cat.name}</span>
+                            {cat.is_premium && <span className="text-yellow-500 text-[10px]">⭐</span>}
+                            {cat.is_active === false && <span className="text-red-400 text-[10px]">●</span>}
+                          </div>
+                          <div className="flex shrink-0">
+                            <button data-testid={`edit-cat-${cat.id}`}
+                              onClick={(e) => { e.stopPropagation(); handleEditCat(cat); }}
+                              className="text-primary/40 hover:text-primary/70 text-xs px-1">✎</button>
+                            <button onClick={(e) => { e.stopPropagation(); handleDeleteCat(cat.id); }}
+                              className="text-red-400/50 hover:text-red-400 text-xs">×</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : (
+                // Flat list (no groups)
+                categories.map((cat) => (
+                  <div key={cat.id}
+                    className={`flex items-center justify-between p-2 rounded-lg cursor-pointer transition-all ${selectedCat === cat.id ? "bg-primary text-secondary" : "hover:bg-primary/10"}`}
+                    style={{ opacity: cat.is_active === false ? 0.45 : 1 }}
+                    onClick={() => setSelectedCat(cat.id)}>
+                    <div className="flex items-center gap-2">
+                      <span>{cat.icon || "🎯"}</span>
+                      <span className="text-sm font-bold truncate">{cat.name}</span>
+                      {cat.is_premium && <span className="text-yellow-500 text-xs">⭐</span>}
+                      {cat.is_active === false && <span className="text-red-400 text-xs">●</span>}
+                    </div>
+                    <button data-testid={`edit-cat-${cat.id}`}
+                      onClick={(e) => { e.stopPropagation(); handleEditCat(cat); }}
+                      className="text-primary/40 hover:text-primary/70 text-xs px-1">✎</button>
+                    <button onClick={(e) => { e.stopPropagation(); handleDeleteCat(cat.id); }}
+                      className="text-red-400/50 hover:text-red-400 text-xs">×</button>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Seed groups button + manage groups */}
+            <div className="mt-3 pt-3 border-t border-primary/10 space-y-2">
+              {isSuperAdmin && categoryGroups.length === 0 && (
+                <button
+                  data-testid="seed-groups-btn"
+                  onClick={async () => {
+                    try {
+                      await axios.post(`${API}/admin/seed-category-groups`, {}, { headers });
+                      toast.success("تم إضافة المجموعات الافتراضية");
+                      loadData();
+                    } catch { toast.error("خطأ"); }
+                  }}
+                  className="w-full bg-primary/10 hover:bg-primary/20 text-primary py-1.5 rounded-lg text-xs font-bold transition-all"
+                >
+                  + أضف مجموعات الفئات
+                </button>
+              )}
+              <button
+                onClick={() => setShowGroupForm(true)}
+                className="w-full bg-primary/10 hover:bg-primary/20 text-primary py-1.5 rounded-lg text-xs font-bold transition-all"
+              >
+                + مجموعة جديدة
+              </button>
             </div>
 
             {/* Stats per category */}
             {selectedCat && (
-              <div className="mt-4 bg-primary/5 rounded-xl p-3">
+              <div className="mt-3 bg-primary/5 rounded-xl p-3">
                 <div className="text-xs font-bold text-primary/50 mb-2">إحصاء الأسئلة</div>
                 {[300, 600, 900].map(d => (
                   <div key={d} className="flex justify-between items-center text-xs py-1">
@@ -1194,24 +1356,63 @@ export default function AdminDashboard() {
           {aiQuestions.length > 0 && (
             <div className="bg-white border border-primary/10 rounded-2xl p-6">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="font-black text-lg">
-                  {aiQuestions.length} سؤال جاهز للمراجعة
-                </h3>
+                <div>
+                  <h3 className="font-black text-lg">{aiQuestions.length} سؤال جاهز للمراجعة</h3>
+                  {aiFetchingImages && (
+                    <p className="text-xs text-primary/40 mt-0.5 flex items-center gap-1">
+                      <span className="animate-spin inline-block">⏳</span> جاري جلب الصور من Unsplash...
+                    </p>
+                  )}
+                </div>
                 <button
                   data-testid="ai-save-btn"
                   onClick={handleAiSave}
                   disabled={aiSaving}
                   className="bg-green-600 text-white px-6 py-2 rounded-xl font-black hover:bg-green-700 transition-all disabled:opacity-50 flex items-center gap-2"
                 >
-                  {aiSaving ? "جاري الحفظ..." : `💾 حفظ الكل (${aiQuestions.length})`}
+                  {aiSaving ? "جاري الحفظ..." : `حفظ المعتمدة (${aiQuestions.length})`}
                 </button>
               </div>
-              <div className="space-y-3 max-h-[500px] overflow-y-auto">
+              <div className="space-y-4 max-h-[600px] overflow-y-auto">
                 {aiQuestions.map((q, i) => (
-                  <div key={q.id} className={`p-4 rounded-xl border ${q.difficulty === 300 ? "border-green-200 bg-green-50" : q.difficulty === 600 ? "border-amber-200 bg-amber-50" : "border-red-200 bg-red-50"}`}>
-                    <div className="flex items-start gap-3">
-                      <span className="text-primary/30 font-black text-sm shrink-0 mt-1">{i + 1}</span>
-                      <div className="flex-1 space-y-2">
+                  <div key={q.id} data-testid={`ai-question-${i}`}
+                    className={`rounded-xl border overflow-hidden ${q.difficulty === 300 ? "border-green-200 bg-green-50" : q.difficulty === 600 ? "border-amber-200 bg-amber-50" : "border-red-200 bg-red-50"}`}>
+                    <div className="flex">
+                      {/* Image Preview */}
+                      <div className="w-28 shrink-0 bg-black/10 relative overflow-hidden">
+                        {q._img_thumb || q.image_url ? (
+                          <img
+                            src={q._img_thumb || q.image_url}
+                            alt=""
+                            className="w-full h-full object-cover"
+                            style={{ minHeight: "100px" }}
+                            onError={e => e.target.style.display = "none"}
+                          />
+                        ) : (
+                          <div className="flex items-center justify-center h-full min-h-[100px] text-primary/20 text-xs text-center p-2">
+                            {q.image_query ? "⏳" : "لا صورة"}
+                          </div>
+                        )}
+                        {q._img_credit && (
+                          <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[9px] px-1 py-0.5 truncate">
+                            © {q._img_credit}
+                          </div>
+                        )}
+                      </div>
+                      {/* Content */}
+                      <div className="flex-1 p-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${q.difficulty === 300 ? "bg-green-200 text-green-800" : q.difficulty === 600 ? "bg-amber-200 text-amber-800" : "bg-red-200 text-red-800"}`}>
+                            {q.difficulty === 300 ? "سهل" : q.difficulty === 600 ? "متوسط" : "صعب"} • {q.difficulty}
+                          </span>
+                          <button
+                            onClick={() => setAiQuestions(aiQuestions.filter((_, idx) => idx !== i))}
+                            className="text-red-400/60 hover:text-red-500 text-xl font-black leading-none"
+                            title="حذف هذا السؤال"
+                          >
+                            ×
+                          </button>
+                        </div>
                         <textarea
                           value={q.text}
                           onChange={(e) => {
@@ -1223,23 +1424,37 @@ export default function AdminDashboard() {
                           className="w-full bg-white border border-primary/10 rounded-lg px-3 py-2 text-sm font-bold outline-none resize-none"
                           placeholder="نص السؤال"
                         />
-                        <input
-                          value={q.answer}
-                          onChange={(e) => {
-                            const updated = [...aiQuestions];
-                            updated[i] = { ...q, answer: e.target.value };
-                            setAiQuestions(updated);
-                          }}
-                          className="w-full bg-white border border-primary/10 rounded-lg px-3 py-2 text-sm outline-none"
-                          placeholder="الإجابة"
-                        />
+                        <div className="flex gap-2">
+                          <input
+                            value={q.answer}
+                            onChange={(e) => {
+                              const updated = [...aiQuestions];
+                              updated[i] = { ...q, answer: e.target.value };
+                              setAiQuestions(updated);
+                            }}
+                            className="flex-1 bg-white border border-primary/10 rounded-lg px-3 py-2 text-sm outline-none"
+                            placeholder="الإجابة"
+                          />
+                          <input
+                            value={q.image_query || ""}
+                            onChange={(e) => {
+                              const updated = [...aiQuestions];
+                              updated[i] = { ...q, image_query: e.target.value };
+                              setAiQuestions(updated);
+                            }}
+                            className="flex-1 bg-white border border-primary/10 rounded-lg px-3 py-2 text-xs outline-none"
+                            placeholder="كلمة بحث الصورة (انجليزي)"
+                          />
+                          <button
+                            onClick={() => fetchUnsplashForQuestion(q.image_query, i)}
+                            disabled={!q.image_query}
+                            title="جلب صورة جديدة"
+                            className="bg-primary/10 hover:bg-primary/20 text-primary px-2 py-1 rounded-lg text-xs font-bold disabled:opacity-30 transition-all"
+                          >
+                            🖼️
+                          </button>
+                        </div>
                       </div>
-                      <button
-                        onClick={() => setAiQuestions(aiQuestions.filter((_, idx) => idx !== i))}
-                        className="text-red-400/50 hover:text-red-500 text-lg shrink-0"
-                      >
-                        ×
-                      </button>
                     </div>
                   </div>
                 ))}
@@ -1658,9 +1873,49 @@ export default function AdminDashboard() {
       )}
 
       {/* Category Form Modal */}
+      {/* ── GROUP FORM MODAL ── */}
+      {showGroupForm && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-xs">
+            <h3 className="text-xl font-black text-primary mb-4">{editingGroup ? "تعديل المجموعة" : "مجموعة فئات جديدة"}</h3>
+            <div className="space-y-3">
+              <input
+                value={groupForm.name}
+                onChange={(e) => setGroupForm({ ...groupForm, name: e.target.value })}
+                placeholder="اسم المجموعة (مثل: علمي، رياضة)"
+                className="w-full border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none"
+              />
+              <input
+                value={groupForm.icon}
+                onChange={(e) => setGroupForm({ ...groupForm, icon: e.target.value })}
+                placeholder="إيموجي (مثل: 🔬)"
+                className="w-full border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none"
+              />
+              <div>
+                <label className="text-xs font-bold text-primary/60 mb-1 block">لون المجموعة</label>
+                <input type="color" value={groupForm.color}
+                  onChange={(e) => setGroupForm({ ...groupForm, color: e.target.value })}
+                  className="w-full h-10 rounded-xl border-2 border-primary/20 cursor-pointer" />
+              </div>
+              <input type="number" value={groupForm.order}
+                onChange={(e) => setGroupForm({ ...groupForm, order: parseInt(e.target.value) || 0 })}
+                placeholder="الترتيب (رقم)"
+                className="w-full border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none" />
+            </div>
+            <div className="flex gap-3 mt-4">
+              <button onClick={handleSaveGroup} className="flex-1 bg-primary text-secondary py-2 rounded-xl font-bold text-sm">
+                {editingGroup ? "تحديث" : "إضافة"}
+              </button>
+              <button onClick={() => { setShowGroupForm(false); setEditingGroup(null); setGroupForm({ name: "", icon: "", color: "#5B0E14", order: 0 }); }}
+                className="flex-1 bg-primary/10 text-primary py-2 rounded-xl font-bold text-sm">إلغاء</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showCatForm && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm max-h-[90vh] overflow-y-auto">
             <h3 className="text-xl font-black text-primary mb-4">{editingCat ? "تعديل الفئة" : "فئة جديدة"}</h3>
             <div className="space-y-3">
               <input
@@ -1681,6 +1936,20 @@ export default function AdminDashboard() {
                 placeholder="وصف الفئة (اختياري)"
                 className="w-full border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none"
               />
+              {/* Group assignment */}
+              <div>
+                <label className="text-sm font-bold text-primary/70 mb-1 block">المجموعة</label>
+                <select
+                  value={catForm.group_id || ""}
+                  onChange={(e) => setCatForm({ ...catForm, group_id: e.target.value || null })}
+                  className="w-full border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none bg-white"
+                >
+                  <option value="">بدون مجموعة</option>
+                  {categoryGroups.map(g => (
+                    <option key={g.id} value={g.id}>{g.icon} {g.name}</option>
+                  ))}
+                </select>
+              </div>
               <div>
                 <label className="text-sm font-bold text-primary/70 mb-1 block">صورة الفئة</label>
                 <div className="flex gap-2 items-center mb-2">
@@ -1706,31 +1975,15 @@ export default function AdminDashboard() {
                 )}
               </div>
               <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={catForm.is_special}
-                  onChange={(e) => setCatForm({ ...catForm, is_special: e.target.checked })}
-                  className="w-4 h-4"
-                />
+                <input type="checkbox" checked={catForm.is_special} onChange={(e) => setCatForm({ ...catForm, is_special: e.target.checked })} className="w-4 h-4" />
                 <span className="text-sm font-bold text-primary/70">فئة خاصة (مثل ولا كلمة)</span>
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={catForm.is_premium}
-                  onChange={(e) => setCatForm({ ...catForm, is_premium: e.target.checked })}
-                  className="w-4 h-4"
-                />
+                <input type="checkbox" checked={catForm.is_premium} onChange={(e) => setCatForm({ ...catForm, is_premium: e.target.checked })} className="w-4 h-4" />
                 <span className="text-sm font-bold text-yellow-700">⭐ فئة Premium (مقفولة للمجانيين)</span>
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  data-testid="cat-active-toggle"
-                  type="checkbox"
-                  checked={catForm.is_active !== false}
-                  onChange={(e) => setCatForm({ ...catForm, is_active: e.target.checked })}
-                  className="w-4 h-4"
-                />
+                <input data-testid="cat-active-toggle" type="checkbox" checked={catForm.is_active !== false} onChange={(e) => setCatForm({ ...catForm, is_active: e.target.checked })} className="w-4 h-4" />
                 <span className="text-sm font-bold text-green-700">✓ فئة مفعّلة (تظهر في اللعبة)</span>
               </label>
             </div>
