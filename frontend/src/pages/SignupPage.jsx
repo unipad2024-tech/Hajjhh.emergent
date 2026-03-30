@@ -31,7 +31,7 @@ export default function SignupPage() {
     } finally { setLoading(false); }
   };
 
-  const PwInput = ({ field, testId, placeholder, show, toggleFn }) => (
+  const PwInput = ({ field, testId, toggleId, placeholder, show, toggleFn }) => (
     <div className="relative">
       <input
         data-testid={testId}
@@ -41,7 +41,7 @@ export default function SignupPage() {
         placeholder={placeholder}
         className="w-full bg-black/30 border-2 border-secondary/20 focus:border-secondary text-secondary placeholder:text-secondary/25 px-4 py-3 pr-12 rounded-xl outline-none transition-all"
       />
-      <button type="button" onClick={toggleFn}
+      <button type="button" data-testid={toggleId} onClick={toggleFn}
         className="absolute left-3 top-1/2 -translate-y-1/2 text-secondary/40 hover:text-secondary/80 transition-colors">
         {show ? <EyeOff size={18} /> : <Eye size={18} />}
       </button>
@@ -83,11 +83,11 @@ export default function SignupPage() {
             </div>
             <div>
               <label className="text-secondary/70 text-xs font-bold block mb-1">كلمة المرور</label>
-              <PwInput field="password" testId="signup-password-input" placeholder="6 أحرف على الأقل" show={showPw} toggleFn={() => setShowPw(v => !v)} />
+              <PwInput field="password" testId="signup-password-input" toggleId="signup-pw-toggle" placeholder="6 أحرف على الأقل" show={showPw} toggleFn={() => setShowPw(v => !v)} />
             </div>
             <div>
               <label className="text-secondary/70 text-xs font-bold block mb-1">تأكيد كلمة المرور</label>
-              <PwInput field="confirm" testId="signup-confirm-input" placeholder="أعد كتابة كلمة المرور" show={showConfirm} toggleFn={() => setShowConfirm(v => !v)} />
+              <PwInput field="confirm" testId="signup-confirm-input" toggleId="signup-confirm-toggle" placeholder="أعد كتابة كلمة المرور" show={showConfirm} toggleFn={() => setShowConfirm(v => !v)} />
             </div>
 
             <button data-testid="signup-submit-btn" type="submit" disabled={loading}

@@ -1,119 +1,159 @@
 # HUJJAH (حُجّة) - Platform PRD & Progress
 
 ## Original Problem Statement
-Upgrade the Hujjah trivia game into a professional SaaS platform with strict Role-Based Access Control (RBAC), an Admin Activity Log, Platform Analytics, Staff Dashboard, and Payment API integration.
-
-## Core Requirements
-- Separate Admin dashboard views: Super Admin (full access) vs Staff (content-only)
-- Backend + Frontend security to prevent unauthorized access
-- Admin Activity Log (who did what, when) - Super Admin only
-- Platform Analytics (users, sessions, categories, revenue) - Super Admin only
-- Payment Gateway endpoints using PAYMENT_API_ID / PAYMENT_API_KEY
+Upgrade the Hujjah trivia game into a professional SaaS platform with:
+- Strict Role-Based Access Control (RBAC) — Super Admin vs Staff
+- Admin Activity Log + Platform Analytics
+- Staff Dashboard + Staff Management
+- Email Notification System
+- AI Question Generation with Unsplash Image Search
+- Category Organization System (Groups)
+- Payment API Integration
 
 ## Tech Stack
-- Frontend: React + Tailwind CSS
-- Backend: FastAPI (Python) + JWT Auth
+- Frontend: React + Tailwind CSS + Lucide React
+- Backend: FastAPI (Python) + JWT Auth + aiosmtplib (email)
 - Database: MongoDB
 - AI: Google Gemini (Emergent LLM Key) for question generation
+- Images: Unsplash API
 
 ## Architecture
 ```
 /app/
-├── backend/server.py    (~2250 lines, monolithic)
+├── backend/server.py    (~2510 lines, monolithic)
 ├── frontend/src/
 │   ├── App.js
 │   ├── context/GameContext.js
 │   └── pages/
-│       ├── AdminDashboard.jsx   (~1550 lines)
+│       ├── AdminDashboard.jsx   (~1900 lines)
 │       ├── AdminLoginPage.jsx
+│       ├── LoginPage.jsx
+│       ├── SignupPage.jsx
+│       ├── QuestionPage.jsx     (zoom modal added)
+│       ├── CategorySelectPage.jsx (group filter added)
 │       ├── GameBoardPage.jsx
-│       ├── QuestionPage.jsx
 │       ├── TournamentBracketPage.jsx
-│       └── CategorySelectPage.jsx
+│       └── TournamentSetupPage.jsx
 └── memory/PRD.md
 ```
 
 ## RBAC Roles
-- **super_admin**: username=`admin`, password=`ADMIN_PASSWORD` — full access
+- **super_admin**: username=`admin`, password=`hujjah2024` — full access to all tabs
 - **staff**: stored in `admin_accounts` collection — content management only
 
-## Staff-Accessible Tabs
+### Staff-Accessible Tabs
 - الأسئلة (questions), توليد AI, وضع التجربة (experimental)
 
-## Super Admin-Only Tabs
+### Super Admin-Only Tabs
 - المستخدمون, الإحصاءات, الإعدادات, سجل النشاط, الموظفون + seed button
 
-## Key API Endpoints (RBAC enforced)
-- `POST /api/admin/login` — accepts {username, password}, returns {token, role, name}
-- `GET /api/admin/verify` — returns {valid, role, name}
-- `GET /api/admin/analytics` — super_admin only
-- `GET /api/admin/users` — super_admin only
-- `GET /api/admin/logs` — super_admin only
-- `POST /api/admin/staff` — super_admin only
-- `GET /api/admin/staff` — super_admin only
-- `DELETE /api/admin/staff/{id}` — super_admin only
-- `POST /api/admin/users/{id}/gift-subscription` — super_admin only
-- `POST /api/payment/v2/initiate` — payment initiation
-- `GET /api/payment/v2/verify/{txn_id}` — payment verification
-- `POST /api/payment/v2/activate` — super_admin only
-- `POST /api/payment/v2/renew` — super_admin only
-- `POST /api/payment/v2/failure` — record payment failure
+## Key API Endpoints
+```
+Authentication:
+POST /api/admin/login        → {username, password} → {token, role, name}
+GET  /api/admin/verify       → {valid, role, name}
+
+RBAC (Super Admin only):
+GET  /api/admin/users
+PUT  /api/admin/users/{id}
+DEL  /api/admin/users/{id}
+POST /api/admin/users/{id}/gift-subscription
+GET  /api/admin/analytics
+GET  /api/admin/sessions
+GET  /api/admin/payments
+GET  /api/admin/logs
+POST /api/admin/staff
+GET  /api/admin/staff
+PUT  /api/admin/staff/{id}
+DEL  /api/admin/staff/{id}
+POST /api/admin/trigger-subscription-check
+
+Content (Both roles):
+GET/POST/PUT/DEL /api/categories
+GET/POST/PUT/DEL /api/questions
+POST /api/ai/generate-questions   (returns image_query per question)
+POST /api/ai/save-questions
+
+Category Groups (Admin):
+GET  /api/category-groups
+POST /api/category-groups
+PUT  /api/category-groups/{id}
+DEL  /api/category-groups/{id}
+POST /api/admin/seed-category-groups
+
+Unsplash:
+GET  /api/unsplash/search?query=...  (admin only)
+
+Payment v2:
+POST /api/payment/v2/initiate
+GET  /api/payment/v2/verify/{txn_id}
+POST /api/payment/v2/activate   (super_admin)
+POST /api/payment/v2/renew      (super_admin)
+POST /api/payment/v2/failure
+```
 
 ## DB Collections
-- `users`: id, email, hashed_password, subscription_type, subscription_expires_at
-- `categories`: id, name, image_url, is_premium, is_active
-- `questions`: id, text, options, correct_answer, category_id, difficulty, is_experimental
+- `users`: id, email, hashed_password, subscription_type, subscription_expires_at, notify_warning_sent, notify_expired_sent
+- `categories`: id, name, icon, image_url, is_premium, is_active, group_id
+- `category_groups`: id, name, icon, color, order, created_at
+- `questions`: id, text, answer, image_query, image_url, answer_image_url, category_id, difficulty, is_experimental
 - `admin_accounts`: id, username, password_hash, display_name, created_at
 - `admin_logs`: id, admin_name, admin_role, action, target_type, target_name, details, timestamp
 - `game_sessions`: id, team1, team2, status, created_at
 - `payment_transactions`: id, user_id, plan_id, amount, currency, payment_status, status
 
+## Environment Variables
+```
+JWT_SECRET_KEY, ADMIN_PASSWORD
+MONGO_URL, DB_NAME
+STRIPE_API_KEY, PAYMENT_API_ID, PAYMENT_API_KEY
+EMAIL_USER=hujjahgame@gmail.com, EMAIL_PASS=(Gmail App Password)
+UNSPLASH_API_KEY=(provided key)
+GEMINI_API_KEY (or Emergent LLM Key)
+```
+
 ## What's Been Implemented
 
 ### Session 1-12 (Previous)
-- Full trivia game: Standard + Tournament modes
+- Full trivia game: Standard + Tournament modes (up to 8 teams)
 - Game Master control panel
-- Premium categories system
+- Premium categories system + is_active toggle
 - AI question generation (Google Gemini)
-- Category is_active toggle
 - 3 letter-based categories seeded (A, B, Q)
-- Tournament bracket redesign (up to 8 teams)
+- Tournament bracket redesign
 - TV-friendly large screen UI
 
-### Session 13 (Feb 2026) — RBAC + Logs + Payments
-- **RBAC System**: Super Admin vs Staff role separation
-  - Modified admin login to accept username + password
-  - `get_admin` returns dict with role info
-  - New `get_super_admin` dependency (403 for staff)
-  - Backward compatible with old tokens
-- **Admin Activity Log**: 
-  - `admin_logs` collection in MongoDB
-  - `log_admin_action()` helper
-  - Logs all CRUD operations on questions, categories, users, settings
-  - "سجل النشاط" tab (Super Admin only)
-- **Staff Management**:
-  - CRUD endpoints for staff accounts
-  - "الموظفون" tab with add/edit/delete UI
-  - Staff stored in `admin_accounts` collection
-- **Gift Subscription**: `POST /admin/users/{id}/gift-subscription`
-- **Enhanced Analytics**: categories.total/active/inactive/premium, most_popular
-- **Payment API v2 endpoints**: initiate, verify, activate, renew, failure
-  - Uses PAYMENT_API_ID + PAYMENT_API_KEY from env
-  - Backend-only (never exposed to frontend)
-- **Frontend RBAC**: Role-aware dashboard, filtered tabs per role
-- **Role badge** in dashboard header
+### Session 13 — RBAC + Logs + Payments (Feb 2026)
+- RBAC: Super Admin vs Staff with JWT sub_role
+- Admin Activity Log (admin_logs collection, log_admin_action helper)
+- Staff Management (CRUD via admin_accounts collection)
+- Gift Subscription endpoint
+- Enhanced Analytics (categories.total/active/premium/most_popular)
+- Payment v2 endpoints (initiate, verify, activate, renew, failure)
+- Role badge in dashboard header, filtered tabs by role
+
+### Session 14 — Images + Email + Categories (Feb 2026)
+- **Password Toggle**: Eye icon on Login, Signup (2 fields), AdminLogin pages
+- **Image Zoom Modal**: Click on question/answer images → fullscreen overlay (ZoomIn icon hover)
+- **AI + Unsplash**: image_query field per generated question, auto-fetch from Unsplash in review UI
+- **Email Notifications**: Gmail SMTP (aiosmtplib), daily subscription check loop, warning (3 days before) + expired emails in Arabic HTML
+- **Category Groups**: 10 default groups (علمي، رياضة، تاريخ، etc.), group_id on categories, group filter tabs in CategorySelectPage, grouped sidebar in AdminDashboard
+- **Admin Dashboard**: Group filter in category sidebar, Group assignment dropdown in category form, Group management (add/edit/delete groups)
+- **Group Form Modal**: Create/edit groups with icon, color, order
 
 ## P1/P2 Remaining Features
-### P1 — Refactoring
-- server.py (~2250 lines) → split into modules (auth.py, payments.py, categories.py, questions.py, admin.py)
-- AdminDashboard.jsx (~1550 lines) → split into sub-components (AnalyticsTab, StaffTab, LogsTab, etc.)
+### P1 — Refactoring (Technical Debt)
+- server.py (~2510 lines) → split into modules: auth.py, payments.py, categories.py, admin.py, email.py
+- AdminDashboard.jsx (~1900 lines) → AnalyticsTab, StaffTab, LogsTab, AITab sub-components
 
-### P2 — Future
-- Real payment gateway integration (requires knowing which gateway PAYMENT_API_ID belongs to)
-- Email notifications for subscriptions
+### P2 — Future Features
+- Real payment gateway integration (requires knowing PAYMENT_API_ID gateway type)
 - User self-service subscription portal
 - Game session analytics (average duration, win rates)
-- Multi-language support
+- Email unsubscribe link
+- Push notifications (Firebase)
+- Multi-language support (EN/AR)
+- Category image from Unsplash (auto-search on category name)
 
 ## Credentials
 - Admin: username=admin, password=hujjah2024
