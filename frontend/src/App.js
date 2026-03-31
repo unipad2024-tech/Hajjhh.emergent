@@ -31,6 +31,7 @@ function App() {
             <Route path="/signup" element={<SignupPage />} />
             <Route path="/pricing" element={<PricingPage />} />
             <Route path="/payment/success" element={<PaymentSuccessPage />} />
+            <Route path="/payment/canceled" element={<PaymentSuccessPage />} />
             <Route path="/mode" element={<GameModeSelectPage />} />
             <Route path="/setup" element={<TeamSetupPage />} />
             <Route path="/tournament" element={<TournamentSetupPage />} />

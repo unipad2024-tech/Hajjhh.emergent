@@ -80,6 +80,13 @@ export default function AdminDashboard() {
   const [showCatForm, setShowCatForm] = useState(false);
   const [editingCat, setEditingCat] = useState(null);
 
+  // Pending questions (import / approval workflow)
+  const [pendingQuestions, setPendingQuestions] = useState([]);
+  const [pendingLoading, setPendingLoading]     = useState(false);
+  const [pendingTotal, setPendingTotal]         = useState(0);
+  const [importUploading, setImportUploading]   = useState(false);
+  const importFileRef = useRef(null);
+
   useEffect(() => {
     if (!token) { navigate("/admin"); return; }
     verifyToken();
@@ -154,6 +161,64 @@ export default function AdminDashboard() {
     } catch { toast.error("خطأ في تحميل قائمة الموظفين"); }
   }, []);
 
+  const loadPendingQuestions = useCallback(async () => {
+    setPendingLoading(true);
+    try {
+      const { data } = await axios.get(`${API}/admin/questions/pending?limit=200`, { headers });
+      setPendingQuestions(data.items || []);
+      setPendingTotal(data.total || 0);
+    } catch { toast.error("خطأ في تحميل الأسئلة المعلقة"); }
+    finally { setPendingLoading(false); }
+  }, []);
+
+  const handleImportFile = async (file) => {
+    if (!file) return;
+    setImportUploading(true);
+    const fd = new FormData();
+    fd.append("file", file);
+    try {
+      const { data } = await axios.post(`${API}/admin/questions/import`, fd, {
+        headers: { ...headers, "Content-Type": "multipart/form-data" },
+      });
+      toast.success(data.message);
+      loadPendingQuestions();
+      setActiveTab("pending");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "خطأ في رفع الملف");
+    } finally { setImportUploading(false); }
+  };
+
+  const handleApproveQuestion = async (qId) => {
+    try {
+      await axios.post(`${API}/admin/questions/${qId}/approve`, {}, { headers });
+      toast.success("تمت الموافقة ونشر السؤال");
+      setPendingQuestions(prev => prev.filter(q => q.id !== qId));
+      setPendingTotal(t => t - 1);
+    } catch { toast.error("خطأ في الموافقة"); }
+  };
+
+  const handleRejectQuestion = async (qId) => {
+    if (!window.confirm("رفض وحذف هذا السؤال؟")) return;
+    try {
+      await axios.post(`${API}/admin/questions/${qId}/reject`, {}, { headers });
+      toast.success("تم رفض السؤال");
+      setPendingQuestions(prev => prev.filter(q => q.id !== qId));
+      setPendingTotal(t => t - 1);
+    } catch { toast.error("خطأ في الرفض"); }
+  };
+
+  const handleApproveAll = async () => {
+    if (!window.confirm(`الموافقة على ${pendingTotal} سؤال ونشرها جميعاً؟`)) return;
+    try {
+      const { data } = await axios.post(`${API}/admin/questions/approve-all`, {}, { headers });
+      toast.success(data.message);
+      setPendingQuestions([]);
+      setPendingTotal(0);
+      const { data: qs } = await axios.get(`${API}/questions`);
+      setQuestions(qs);
+    } catch { toast.error("خطأ في الموافقة الجماعية"); }
+  };
+
   const saveSettings = async () => {
     try {
       const body = {
@@ -194,6 +259,7 @@ export default function AdminDashboard() {
     if (activeTab === "settings") loadSettings();
     if (activeTab === "logs") loadLogs();
     if (activeTab === "staff") loadStaff();
+    if (activeTab === "pending") loadPendingQuestions();
   }, [activeTab]);
 
   // ── Auto-save state ──
@@ -346,26 +412,22 @@ export default function AdminDashboard() {
     } catch { toast.error("خطأ في الحفظ"); }
   };
 
-  const fetchUnsplashForQuestion = async (imageQuery, questionIndex) => {
-    if (!imageQuery) return;
+  const fetchUnsplashForQuestion = async (imageQuery) => {
+    if (!imageQuery) return null;
     try {
       const { data } = await axios.get(
         `${API}/unsplash/search?query=${encodeURIComponent(imageQuery)}`,
         { headers }
       );
       if (data.url) {
-        setAiQuestions(prev => {
-          const updated = [...prev];
-          updated[questionIndex] = {
-            ...updated[questionIndex],
-            image_url: data.regular_url || data.url,
-            _img_thumb: data.url,
-            _img_credit: data.credit_name,
-          };
-          return updated;
-        });
+        return {
+          image_url:    data.regular_url || data.url,
+          _img_thumb:   data.url,
+          _img_credit:  data.credit_name,
+        };
       }
     } catch {}
+    return null;
   };
 
   const handleAiGenerate = async () => {
@@ -381,10 +443,20 @@ export default function AdminDashboard() {
       }, { headers });
       setAiQuestions(data.questions);
       toast.success(`تم توليد ${data.count} سؤال! جاري جلب الصور...`);
-      // Fetch Unsplash images in parallel
+      // Fetch Unsplash images in parallel — collect ALL results before updating state
       setAiFetchingImages(true);
-      await Promise.allSettled(
-        data.questions.map((q, i) => fetchUnsplashForQuestion(q.image_query, i))
+      const imageResults = await Promise.allSettled(
+        data.questions.map((q) => fetchUnsplashForQuestion(q.image_query))
+      );
+      // Apply all results at once to avoid race conditions
+      setAiQuestions(prev =>
+        prev.map((q, i) => {
+          const res = imageResults[i];
+          if (res?.status === "fulfilled" && res.value) {
+            return { ...q, ...res.value };
+          }
+          return q;
+        })
       );
       setAiFetchingImages(false);
       toast.success("جاهز! راجع الأسئلة والصور");
@@ -407,6 +479,43 @@ export default function AdminDashboard() {
       setQuestions(qs);
     } catch { toast.error("خطأ في الحفظ"); }
     finally { setAiSaving(false); }
+  };
+
+  const handleAiSaveAsPending = async () => {
+    if (!aiQuestions.length) return;
+    setAiSaving(true);
+    try {
+      const questionsToSave = aiQuestions.map(({ _img_thumb, _img_credit, ...q }) => q);
+      const { data } = await axios.post(`${API}/ai/save-questions`, { questions: questionsToSave, pending: true }, { headers });
+      toast.success(data.message + " — راجعها في تبويب مراجعة الأسئلة");
+      setAiQuestions([]);
+      loadPendingQuestions();
+      setActiveTab("pending");
+    } catch { toast.error("خطأ في الحفظ"); }
+    finally { setAiSaving(false); }
+  };
+
+  const handleAiGenerate18 = async () => {
+    if (!aiCatId) { toast.error("اختر الفئة أولاً"); return; }
+    setAiGenerating(true);
+    setAiQuestions([]);
+    try {
+      const { data } = await axios.post(`${API}/ai/generate-questions`, {
+        category_id: aiCatId,
+        mode: "full18",
+      }, { headers });
+      toast.success(`تم توليد ${data.count} سؤال! جاري الحفظ في قائمة المراجعة...`);
+      // Save directly as pending
+      const questionsToSave = data.questions;
+      await axios.post(`${API}/ai/save-questions`, { questions: questionsToSave, pending: true }, { headers });
+      toast.success("تم إرسال 18 سؤال لقائمة المراجعة ✓");
+      loadPendingQuestions();
+      setActiveTab("pending");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "خطأ في التوليد");
+    } finally {
+      setAiGenerating(false);
+    }
   };
 
   const handleUpdateUserSub = async (userId, subType) => {
@@ -532,6 +641,7 @@ export default function AdminDashboard() {
           {/* Tabs - filtered by role */}
           {[
             { key: "questions", label: "الأسئلة", forAll: true },
+            { key: "pending", label: `مراجعة الأسئلة${pendingTotal > 0 ? ` (${pendingTotal})` : ""}`, forAll: true },
             { key: "users", label: "المستخدمون", superOnly: true },
             { key: "analytics", label: "الإحصاءات", superOnly: true },
             { key: "settings", label: "الإعدادات", superOnly: true },
@@ -749,6 +859,23 @@ export default function AdminDashboard() {
                   title="سلة المحذوفات"
                 >
                   🗑️ استعادة
+                </button>
+                {/* Import file button */}
+                <input
+                  ref={importFileRef}
+                  type="file"
+                  accept=".xlsx,.xls,.csv,.json"
+                  className="hidden"
+                  onChange={(e) => handleImportFile(e.target.files?.[0])}
+                />
+                <button
+                  data-testid="import-questions-btn"
+                  onClick={() => importFileRef.current?.click()}
+                  disabled={importUploading}
+                  className="text-sm text-blue-600 hover:text-blue-700 border border-blue-200 hover:border-blue-400 px-3 py-1.5 rounded-lg transition-all font-bold disabled:opacity-50"
+                  title="رفع ملف أسئلة (Excel/CSV/JSON)"
+                >
+                  {importUploading ? "⏳ جاري الرفع..." : "📥 رفع ملف"}
                 </button>
                 <button
                   data-testid="add-question-btn"
@@ -1322,6 +1449,139 @@ export default function AdminDashboard() {
         </div>
       )}
 
+      {/* ── PENDING QUESTIONS (APPROVAL WORKFLOW) TAB ── */}
+      {activeTab === "pending" && (
+        <div className="p-6 max-w-5xl mx-auto">
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <span className="text-3xl">📋</span>
+              <div>
+                <h2 className="text-2xl font-black">مراجعة الأسئلة ({pendingTotal})</h2>
+                <p className="text-primary/50 text-sm">أسئلة في انتظار الموافقة قبل نشرها</p>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button
+                data-testid="reload-pending-btn"
+                onClick={loadPendingQuestions}
+                disabled={pendingLoading}
+                className="border border-primary/20 text-primary/60 px-4 py-2 rounded-xl font-bold text-sm hover:border-primary/50 transition-all"
+              >
+                {pendingLoading ? "⏳" : "↺"} تحديث
+              </button>
+              {pendingTotal > 0 && (
+                <button
+                  data-testid="approve-all-btn"
+                  onClick={handleApproveAll}
+                  className="bg-green-600 text-white px-5 py-2 rounded-xl font-black text-sm hover:bg-green-700 transition-all"
+                >
+                  ✓ موافقة على الكل ({pendingTotal})
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Import section */}
+          <div className="bg-blue-50 border border-blue-200 rounded-2xl p-5 mb-6">
+            <div className="flex items-center gap-3 mb-3">
+              <span className="text-xl">📥</span>
+              <div>
+                <div className="font-black text-blue-800">استيراد أسئلة من ملف</div>
+                <div className="text-xs text-blue-600">Excel (.xlsx) · CSV (.csv) · JSON (.json)</div>
+              </div>
+            </div>
+            <div className="text-xs text-blue-700 mb-4 bg-blue-100 rounded-xl p-3">
+              <div className="font-bold mb-1">تنسيق الملف المطلوب:</div>
+              <div>أعمدة مطلوبة: <strong>text</strong> (نص السؤال) · <strong>answer</strong> (الإجابة)</div>
+              <div>أعمدة اختيارية: <strong>difficulty</strong> (300/600/900) · <strong>category_id</strong> · <strong>image_query</strong></div>
+            </div>
+            <input
+              ref={importFileRef}
+              type="file"
+              accept=".xlsx,.xls,.csv,.json"
+              className="hidden"
+              onChange={(e) => handleImportFile(e.target.files?.[0])}
+            />
+            <button
+              data-testid="import-file-btn"
+              onClick={() => importFileRef.current?.click()}
+              disabled={importUploading}
+              className="bg-blue-600 text-white px-6 py-2.5 rounded-xl font-black text-sm hover:bg-blue-700 transition-all disabled:opacity-50 flex items-center gap-2"
+            >
+              {importUploading ? (<><span className="animate-spin">⏳</span> جاري الرفع...</>) : (<><span>📂</span> اختر ملف</>)}
+            </button>
+          </div>
+
+          {/* Pending list */}
+          {pendingLoading ? (
+            <div className="text-center py-16 text-primary/40">
+              <div className="text-4xl mb-3 animate-spin">⏳</div>
+              <div>جاري التحميل...</div>
+            </div>
+          ) : pendingQuestions.length === 0 ? (
+            <div className="text-center py-16 text-primary/30">
+              <div className="text-5xl mb-3">✅</div>
+              <div className="font-bold">لا توجد أسئلة معلقة</div>
+              <div className="text-sm mt-1">جميع الأسئلة المستوردة تمت مراجعتها</div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {pendingQuestions.map((q, i) => {
+                const diffColor = q.difficulty === 300 ? "green" : q.difficulty === 600 ? "amber" : "red";
+                const diffLabel = q.difficulty === 300 ? "سهل" : q.difficulty === 600 ? "متوسط" : "صعب";
+                const cat = categories.find(c => c.id === q.category_id);
+                return (
+                  <div
+                    key={q.id}
+                    data-testid={`pending-q-${i}`}
+                    className={`bg-white border rounded-2xl overflow-hidden flex gap-0 border-${diffColor}-200`}
+                  >
+                    <div className={`w-1.5 shrink-0 bg-${diffColor}-400`} />
+                    <div className="flex-1 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-2 flex-wrap">
+                            <span className={`text-[11px] font-black px-2 py-0.5 rounded-full bg-${diffColor}-100 text-${diffColor}-800`}>
+                              {diffLabel} · {q.difficulty}
+                            </span>
+                            {cat && (
+                              <span className="text-[11px] px-2 py-0.5 rounded-full bg-primary/10 text-primary/60 font-bold">
+                                {cat.icon} {cat.name}
+                              </span>
+                            )}
+                          </div>
+                          <div className="font-bold text-primary mb-1">{q.text}</div>
+                          <div className="text-sm text-primary/60">الإجابة: <span className="font-black text-primary">{q.answer}</span></div>
+                          {q.image_url && (
+                            <img src={q.image_url} alt="" className="mt-2 h-16 rounded-lg object-cover" onError={e => e.target.style.display = "none"} />
+                          )}
+                        </div>
+                        <div className="flex flex-col gap-2 shrink-0">
+                          <button
+                            data-testid={`approve-q-${q.id}`}
+                            onClick={() => handleApproveQuestion(q.id)}
+                            className="bg-green-600 text-white px-4 py-2 rounded-xl font-black text-sm hover:bg-green-700 transition-all whitespace-nowrap"
+                          >
+                            ✓ نشر
+                          </button>
+                          <button
+                            data-testid={`reject-q-${q.id}`}
+                            onClick={() => handleRejectQuestion(q.id)}
+                            className="bg-red-100 text-red-600 px-4 py-2 rounded-xl font-black text-sm hover:bg-red-200 transition-all whitespace-nowrap"
+                          >
+                            ✕ رفض
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── AI GENERATOR TAB ── */}
       {activeTab === "ai" && (
         <div className="p-6 max-w-3xl mx-auto">
@@ -1411,6 +1671,16 @@ export default function AdminDashboard() {
                 </>
               )}
             </button>
+            <button
+              data-testid="ai-generate-18-btn"
+              onClick={handleAiGenerate18}
+              disabled={aiGenerating || !aiCatId}
+              className="w-full mt-2 bg-amber-700 text-white py-3 rounded-xl font-black text-base hover:scale-[1.01] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              title="يولّد 18 سؤال: 6 سهل + 6 متوسط + 6 صعب ويرسلها للمراجعة"
+            >
+              <span>🎯</span>
+              <span>ولّد 18 سؤال كاملة (6+6+6) للمراجعة</span>
+            </button>
           </div>
 
           {/* Generated Questions Preview */}
@@ -1425,14 +1695,24 @@ export default function AdminDashboard() {
                     </p>
                   )}
                 </div>
-                <button
-                  data-testid="ai-save-btn"
-                  onClick={handleAiSave}
-                  disabled={aiSaving}
-                  className="bg-green-600 text-white px-6 py-2 rounded-xl font-black hover:bg-green-700 transition-all disabled:opacity-50 flex items-center gap-2"
-                >
-                  {aiSaving ? "جاري الحفظ..." : `حفظ المعتمدة (${aiQuestions.length})`}
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    data-testid="ai-save-pending-btn"
+                    onClick={handleAiSaveAsPending}
+                    disabled={aiSaving}
+                    className="bg-amber-600 text-white px-4 py-2 rounded-xl font-black text-sm hover:bg-amber-700 transition-all disabled:opacity-50"
+                  >
+                    {aiSaving ? "..." : "📋 للمراجعة"}
+                  </button>
+                  <button
+                    data-testid="ai-save-btn"
+                    onClick={handleAiSave}
+                    disabled={aiSaving}
+                    className="bg-green-600 text-white px-6 py-2 rounded-xl font-black hover:bg-green-700 transition-all disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {aiSaving ? "جاري الحفظ..." : `✓ نشر مباشر (${aiQuestions.length})`}
+                  </button>
+                </div>
               </div>
               <div className="space-y-4 max-h-[600px] overflow-y-auto">
                 {aiQuestions.map((q, i) => (
@@ -1507,7 +1787,12 @@ export default function AdminDashboard() {
                             placeholder="كلمة بحث الصورة (انجليزي)"
                           />
                           <button
-                            onClick={() => fetchUnsplashForQuestion(q.image_query, i)}
+                            onClick={async () => {
+                              const result = await fetchUnsplashForQuestion(q.image_query);
+                              if (result) {
+                                setAiQuestions(prev => prev.map((item, idx) => idx === i ? { ...item, ...result } : item));
+                              }
+                            }}
                             disabled={!q.image_query}
                             title="جلب صورة جديدة"
                             className="bg-primary/10 hover:bg-primary/20 text-primary px-2 py-1 rounded-lg text-xs font-bold disabled:opacity-30 transition-all"

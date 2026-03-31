@@ -10,30 +10,44 @@ export default function PaymentSuccessPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { userToken, refreshUser } = useGame();
-  const [status, setStatus] = useState("checking"); // checking | success | pending | error
+  const [status, setStatus] = useState("checking");
 
   useEffect(() => {
-    const sessionId = searchParams.get("session_id");
-    if (!sessionId || !userToken) {
+    // Get transaction_no from URL param or localStorage
+    const txnFromUrl    = searchParams.get("txn") || searchParams.get("transactionNo") || searchParams.get("transaction_no");
+    const txnFromStore  = localStorage.getItem("paylink_txn");
+    const transactionNo = txnFromUrl || txnFromStore;
+
+    if (!transactionNo) {
       setStatus("error");
       return;
     }
-    const checkStatus = async () => {
+
+    const verify = async () => {
       try {
-        const { data } = await axios.get(`${API}/subscription/status/${sessionId}`, {
-          headers: { Authorization: `Bearer ${userToken}` },
-        });
-        if (data.payment_status === "paid") {
-          await refreshUser();
-          setStatus("success");
+        if (userToken) {
+          // Authenticated: call verify endpoint (activates subscription if paid)
+          const { data } = await axios.get(`${API}/paylink/verify/${transactionNo}`, {
+            headers: { Authorization: `Bearer ${userToken}` },
+          });
+          if (data.order_status === "Paid") {
+            localStorage.removeItem("paylink_txn");
+            if (refreshUser) await refreshUser();
+            setStatus("success");
+          } else {
+            setStatus("pending");
+          }
         } else {
-          setStatus("pending");
+          // Not logged in: public check only
+          const { data } = await axios.get(`${API}/paylink/status/${transactionNo}`);
+          setStatus(data.order_status === "Paid" ? "success" : "pending");
         }
       } catch {
         setStatus("error");
       }
     };
-    checkStatus();
+
+    verify();
   }, []);
 
   const messages = {
@@ -47,7 +61,7 @@ export default function PaymentSuccessPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center px-4" style={DARK_BG}>
-      <div className="relative z-10 text-center animate-scale-in max-w-sm w-full">
+      <div className="relative z-10 text-center max-w-sm w-full">
         <div
           className={`w-24 h-24 rounded-full flex items-center justify-center text-4xl mx-auto mb-6 border-2 ${
             status === "success" ? "border-green-400 bg-green-900/30 text-green-400" :
@@ -57,32 +71,34 @@ export default function PaymentSuccessPage() {
         >
           {m.icon}
         </div>
+        <h1 className="text-secondary font-black text-2xl mb-2">{m.title}</h1>
+        <p className="text-secondary/60 text-sm mb-8">{m.sub}</p>
 
-        <h1
-          className="font-black text-secondary text-3xl mb-2"
-          style={{ fontFamily: "Cairo, sans-serif" }}
-        >
-          {m.title}
-        </h1>
-        <p className="text-secondary/60 text-base mb-8">{m.sub}</p>
-
-        {(status === "success" || status === "pending") && (
+        {status === "success" && (
           <button
-            data-testid="payment-play-btn"
+            data-testid="go-home-btn"
             onClick={() => navigate("/")}
-            className="bg-secondary text-primary font-black px-10 py-3 rounded-full hover:scale-105 transition-all text-lg"
-            style={{ boxShadow: "0 0 25px rgba(241,225,148,0.3)" }}
+            className="bg-secondary text-primary font-black px-10 py-3 rounded-full hover:scale-105 transition-all"
           >
             العب الحين
           </button>
         )}
-
+        {status === "pending" && (
+          <div className="space-y-3">
+            <button
+              onClick={() => window.location.reload()}
+              className="bg-secondary text-primary font-black px-8 py-3 rounded-full hover:scale-105 transition-all block w-full"
+            >
+              التحقق مجدداً
+            </button>
+            <button onClick={() => navigate("/")} className="text-secondary/40 text-sm hover:text-secondary transition-colors">
+              العودة للرئيسية
+            </button>
+          </div>
+        )}
         {status === "error" && (
-          <button
-            onClick={() => navigate("/pricing")}
-            className="bg-primary/60 border border-secondary/30 text-secondary font-bold px-8 py-3 rounded-full hover:border-secondary/60 transition-all"
-          >
-            رجوع لصفحة الأسعار
+          <button onClick={() => navigate("/pricing")} className="text-secondary/60 hover:text-secondary text-sm transition-colors">
+            العودة للاشتراك
           </button>
         )}
       </div>

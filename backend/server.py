@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
-import os, logging, uuid, random, shutil, re, json, httpx, asyncio
+import os, logging, uuid, random, shutil, re, json, httpx, asyncio, io
 from pathlib import Path
 from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional, Dict
@@ -16,6 +16,8 @@ from email.mime.text import MIMEText
 from emergentintegrations.payments.stripe.checkout import (
     StripeCheckout, CheckoutSessionRequest, CheckoutSessionResponse, CheckoutStatusResponse
 )
+from services.payment.paylinkService import create_invoice as paylink_create_invoice, get_invoice_status as paylink_get_status
+import pandas as pd
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -588,6 +590,212 @@ async def autosave_question(q_id: str, body: dict, admin: dict = Depends(get_adm
     await db.questions.update_one({"id": q_id}, {"$set": {"is_experimental": val}})
     return {"id": q_id, "is_experimental": val}
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# QUESTION IMPORT  (Excel / CSV / JSON)
+# ══════════════════════════════════════════════════════════════════════════════
+
+DIFF_MAP_IMPORT = {300: 300, 600: 600, 900: 900, "300": 300, "600": 600, "900": 900,
+                   "easy": 300, "سهل": 300, "medium": 600, "متوسط": 600, "hard": 900, "صعب": 900}
+
+def _parse_difficulty(val) -> int:
+    if val is None: return 300
+    if isinstance(val, (int, float)) and not str(val) == "nan":
+        return DIFF_MAP_IMPORT.get(int(val), 300)
+    return DIFF_MAP_IMPORT.get(str(val).strip().lower(), 300)
+
+def _parse_questions_df(df: "pd.DataFrame", category_id: str) -> list:
+    """Convert a DataFrame to a list of question dicts."""
+    # Normalize column names
+    col_map = {}
+    for c in df.columns:
+        cl = str(c).strip().lower()
+        if cl in ("text", "question", "سؤال", "نص السؤال"):
+            col_map["text"] = c
+        elif cl in ("answer", "الإجابة", "إجابة", "جواب"):
+            col_map["answer"] = c
+        elif cl in ("difficulty", "صعوبة", "مستوى"):
+            col_map["difficulty"] = c
+        elif cl in ("category_id", "category", "فئة"):
+            col_map["category_id"] = c
+        elif cl in ("image_url", "image", "صورة"):
+            col_map["image_url"] = c
+        elif cl in ("image_query",):
+            col_map["image_query"] = c
+
+    questions = []
+    ts = datetime.now(timezone.utc).isoformat()
+    for _, row in df.iterrows():
+        text  = str(row.get(col_map.get("text", ""), "") or "").strip()
+        ans   = str(row.get(col_map.get("answer", ""), "") or "").strip()
+        if not text or not ans or text == "nan" or ans == "nan":
+            continue
+        cat_id = str(row.get(col_map.get("category_id", ""), category_id) or category_id).strip()
+        diff   = _parse_difficulty(row.get(col_map.get("difficulty", ""), 300))
+        img    = str(row.get(col_map.get("image_url", ""), "") or "").strip()
+        query  = str(row.get(col_map.get("image_query", ""), "") or "").strip()
+        questions.append({
+            "id":               str(uuid.uuid4()),
+            "category_id":      cat_id if cat_id != "nan" else category_id,
+            "difficulty":       diff,
+            "text":             text,
+            "answer":           ans,
+            "image_url":        img if img != "nan" else "",
+            "answer_image_url": "",
+            "image_query":      query if query != "nan" else "",
+            "question_type":    "text",
+            "is_experimental":  False,
+            "status":           "pending",
+            "created_at":       ts,
+        })
+    return questions
+
+
+@api_router.post("/admin/questions/import")
+async def import_questions(
+    file: UploadFile = File(...),
+    category_id: str = "",
+    admin: dict = Depends(get_admin),
+):
+    """Import questions from Excel / CSV / JSON file into a staging area."""
+    filename = (file.filename or "").lower()
+    content  = await file.read()
+
+    try:
+        if filename.endswith(".json"):
+            raw = json.loads(content.decode("utf-8"))
+            raw_list = raw if isinstance(raw, list) else raw.get("questions", [])
+            ts = datetime.now(timezone.utc).isoformat()
+            questions = []
+            for r in raw_list:
+                text = str(r.get("text") or r.get("question") or "").strip()
+                ans  = str(r.get("answer") or "").strip()
+                if not text or not ans: continue
+                questions.append({
+                    "id":               str(uuid.uuid4()),
+                    "category_id":      str(r.get("category_id") or category_id or "").strip() or category_id,
+                    "difficulty":       _parse_difficulty(r.get("difficulty", 300)),
+                    "text":             text,
+                    "answer":           ans,
+                    "image_url":        str(r.get("image_url") or "").strip(),
+                    "answer_image_url": "",
+                    "image_query":      str(r.get("image_query") or "").strip(),
+                    "question_type":    "text",
+                    "is_experimental":  False,
+                    "status":           "pending",
+                    "created_at":       ts,
+                })
+        elif filename.endswith(".csv"):
+            df = pd.read_csv(io.BytesIO(content))
+            questions = _parse_questions_df(df, category_id)
+        elif filename.endswith((".xlsx", ".xls")):
+            df = pd.read_excel(io.BytesIO(content))
+            questions = _parse_questions_df(df, category_id)
+        else:
+            raise HTTPException(400, "صيغة الملف غير مدعومة — استخدم Excel أو CSV أو JSON")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(422, f"خطأ في قراءة الملف: {str(e)[:200]}")
+
+    if not questions:
+        raise HTTPException(400, "لم يتم العثور على أسئلة صالحة في الملف")
+
+    await db.pending_questions.insert_many(questions)
+    await log_admin_action(admin, "رفع ملف أسئلة", "أسئلة معلقة", filename,
+                           f"عدد الأسئلة: {len(questions)}")
+    return {"message": f"تم استيراد {len(questions)} سؤال في انتظار المراجعة", "count": len(questions)}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ADMIN APPROVAL WORKFLOW
+# ══════════════════════════════════════════════════════════════════════════════
+
+@api_router.get("/admin/questions/pending")
+async def get_pending_questions(
+    category_id: Optional[str] = None,
+    limit: int = 100,
+    admin: dict = Depends(get_admin),
+):
+    """Get all questions in the staging area awaiting admin approval."""
+    q = {}
+    if category_id:
+        q["category_id"] = category_id
+    items = await db.pending_questions.find(q, {"_id": 0}).sort("created_at", -1).limit(limit).to_list(limit)
+    total = await db.pending_questions.count_documents(q)
+    return {"items": items, "total": total}
+
+
+@api_router.post("/admin/questions/{q_id}/approve")
+async def approve_pending_question(q_id: str, body: dict = {}, admin: dict = Depends(get_admin)):
+    """Approve a pending question — move it to the live questions collection."""
+    q = await db.pending_questions.find_one({"id": q_id}, {"_id": 0})
+    if not q:
+        raise HTTPException(404, "السؤال غير موجود في قائمة الانتظار")
+
+    # Apply any edits passed in the request body
+    allowed = {"text", "answer", "image_url", "answer_image_url", "image_query", "difficulty", "category_id"}
+    for k, v in (body or {}).items():
+        if k in allowed:
+            q[k] = v
+
+    q.pop("status", None)
+    q["approved_by"] = admin.get("admin_name", "admin")
+    q["approved_at"] = datetime.now(timezone.utc).isoformat()
+
+    await db.questions.insert_one(q)
+    await db.pending_questions.delete_one({"id": q_id})
+    await log_admin_action(admin, "موافقة سؤال", "سؤال", q.get("text", q_id)[:60])
+    return {"message": "تمت الموافقة ونشر السؤال", "id": q_id}
+
+
+@api_router.post("/admin/questions/{q_id}/reject")
+async def reject_pending_question(q_id: str, body: dict = {}, admin: dict = Depends(get_admin)):
+    """Reject and delete a pending question."""
+    q = await db.pending_questions.find_one({"id": q_id}, {"_id": 0})
+    if not q:
+        raise HTTPException(404, "السؤال غير موجود")
+    reason = (body or {}).get("reason", "رُفض من قِبل المشرف")
+    await db.pending_questions.delete_one({"id": q_id})
+    await log_admin_action(admin, "رفض سؤال", "سؤال", q.get("text", q_id)[:60], reason)
+    return {"message": "تم رفض السؤال وحذفه"}
+
+
+@api_router.put("/admin/questions/{q_id}/pending")
+async def update_pending_question(q_id: str, body: dict, admin: dict = Depends(get_admin)):
+    """Edit a pending question before approval."""
+    allowed = {"text", "answer", "image_url", "answer_image_url", "image_query",
+               "difficulty", "category_id", "question_type"}
+    updates = {k: v for k, v in body.items() if k in allowed}
+    if not updates:
+        raise HTTPException(400, "لا توجد حقول صالحة للتحديث")
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    res = await db.pending_questions.find_one_and_update(
+        {"id": q_id}, {"$set": updates}, {"_id": 0}, return_document=True
+    )
+    if not res:
+        raise HTTPException(404, "السؤال غير موجود")
+    return res
+
+
+@api_router.post("/admin/questions/approve-all")
+async def approve_all_pending(admin: dict = Depends(get_admin)):
+    """Approve ALL pending questions in one click."""
+    pending = await db.pending_questions.find({}, {"_id": 0}).to_list(10000)
+    if not pending:
+        return {"message": "لا توجد أسئلة معلقة", "count": 0}
+    ts     = datetime.now(timezone.utc).isoformat()
+    to_ins = []
+    for q in pending:
+        q.pop("status", None)
+        q["approved_by"] = admin.get("admin_name", "admin")
+        q["approved_at"] = ts
+        to_ins.append(q)
+    await db.questions.insert_many(to_ins)
+    await db.pending_questions.delete_many({})
+    await log_admin_action(admin, "موافقة جماعية", "أسئلة", f"{len(to_ins)} سؤال")
+    return {"message": f"تمت الموافقة على {len(to_ins)} سؤال ونشرها", "count": len(to_ins)}
+
 # ══════════════════════════════════════════════════════════════════════════════
 # GAME SESSION
 # ══════════════════════════════════════════════════════════════════════════════
@@ -649,8 +857,8 @@ async def get_next_question(session_id: str, category_id: str, difficulty: int,
             is_trial = False
             exclude_ids = list(set(exclude_ids + user.get("answered_question_ids", [])))
 
-    # Build base query
-    base_q = {"category_id": category_id, "difficulty": difficulty, "id": {"$nin": exclude_ids}}
+    # Build base query — exclude soft-deleted questions
+    base_q = {"category_id": category_id, "difficulty": difficulty, "id": {"$nin": exclude_ids}, "deleted_at": None}
 
     # Trial sessions: filter only experimental questions (if any are marked)
     if is_trial:
@@ -669,7 +877,7 @@ async def get_next_question(session_id: str, category_id: str, difficulty: int,
 
     if not available:
         # Reset and try again (ignoring exclude list)
-        reset_q = {"category_id": category_id, "difficulty": difficulty}
+        reset_q = {"category_id": category_id, "difficulty": difficulty, "deleted_at": None}
         if is_trial and (settings_doc if 'settings_doc' in dir() else {}).get("trial_questions_only"):
             reset_q["is_experimental"] = True
         available = await db.questions.find(reset_q, {"_id": 0}).to_list(1000)
@@ -947,6 +1155,123 @@ async def payment_failure(body: dict):
                       "updated_at": datetime.now(timezone.utc).isoformat()}}
         )
     return {"message": "تم تسجيل فشل الدفع"}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PAYLINK PAYMENT GATEWAY  (paylink.sa)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class PaylinkInitiate(BaseModel):
+    plan_id: str = "monthly"
+    client_name: str
+    client_mobile: str
+    origin_url: str  # frontend base URL for redirect
+
+@api_router.post("/paylink/initiate")
+async def paylink_initiate(body: PaylinkInitiate, user: dict = Depends(require_user)):
+    """Create a Paylink invoice and return the payment URL."""
+    if not PAYMENT_API_ID or not PAYMENT_API_KEY:
+        raise HTTPException(503, "بوابة الدفع غير مفعّلة — تواصل مع الإدارة")
+
+    plan = SUBSCRIPTION_PLANS.get(body.plan_id)
+    if not plan:
+        raise HTTPException(400, "الخطة غير موجودة")
+
+    order_number = f"HUJJAH-{uuid.uuid4().hex[:12].upper()}"
+    base_url     = body.origin_url.rstrip("/")
+    callback_url = f"{base_url}/payment/success"
+    cancel_url   = f"{base_url}/payment/canceled"
+
+    try:
+        result = await paylink_create_invoice(
+            amount=plan["amount"],
+            order_number=order_number,
+            client_name=body.client_name,
+            client_mobile=body.client_mobile,
+            client_email=user.get("email", ""),
+            callback_url=callback_url,
+            cancel_url=cancel_url,
+            note=f"{plan['name']} — حُجّة",
+        )
+    except Exception as e:
+        logger.error(f"Paylink initiate error: {e}")
+        raise HTTPException(502, f"خطأ في بوابة الدفع: {str(e)[:200]}")
+
+    transaction_no = result.get("transactionNo", "")
+    payment_url    = result.get("url", "")
+
+    # Store transaction
+    txn = {
+        "id":             str(uuid.uuid4()),
+        "transaction_no": transaction_no,
+        "order_number":   order_number,
+        "user_id":        user["id"],
+        "email":          user.get("email", ""),
+        "plan_id":        body.plan_id,
+        "amount":         plan["amount"],
+        "currency":       "SAR",
+        "payment_status": "pending",
+        "gateway":        "paylink",
+        "payment_url":    payment_url,
+        "created_at":     datetime.now(timezone.utc).isoformat(),
+    }
+    await db.payment_transactions.insert_one(txn)
+
+    return {
+        "payment_url":    payment_url,
+        "transaction_no": transaction_no,
+        "order_number":   order_number,
+        "amount":         plan["amount"],
+        "currency":       "SAR",
+    }
+
+
+@api_router.get("/paylink/verify/{transaction_no}")
+async def paylink_verify(transaction_no: str, user: dict = Depends(require_user)):
+    """Verify Paylink payment status and activate premium if paid."""
+    txn = await db.payment_transactions.find_one(
+        {"transaction_no": transaction_no, "user_id": user["id"]}, {"_id": 0}
+    )
+    if not txn:
+        raise HTTPException(404, "المعاملة غير موجودة")
+
+    # Already paid
+    if txn.get("payment_status") == "paid":
+        return {"order_status": "Paid", "message": "الاشتراك مفعّل"}
+
+    try:
+        data = await paylink_get_status(transaction_no)
+    except Exception as e:
+        logger.error(f"Paylink verify error: {e}")
+        raise HTTPException(502, f"خطأ التحقق: {str(e)[:200]}")
+
+    order_status = data.get("orderStatus", "Pending")
+    now = datetime.now(timezone.utc).isoformat()
+
+    if order_status == "Paid":
+        plan     = SUBSCRIPTION_PLANS.get(txn.get("plan_id", "monthly"), SUBSCRIPTION_PLANS["monthly"])
+        expires  = (datetime.now(timezone.utc) + timedelta(days=plan["days"])).isoformat()
+        await db.users.update_one(
+            {"id": user["id"]},
+            {"$set": {"subscription_type": "premium", "subscription_expires_at": expires,
+                      "notify_warning_sent": False, "notify_expired_sent": False}}
+        )
+        await db.payment_transactions.update_one(
+            {"transaction_no": transaction_no},
+            {"$set": {"payment_status": "paid", "status": "complete", "updated_at": now}}
+        )
+
+    return {"order_status": order_status, "message": "تم التحقق"}
+
+
+@api_router.get("/paylink/status/{transaction_no}")
+async def paylink_status_check(transaction_no: str):
+    """Public status check (no auth) — called after redirect from Paylink."""
+    try:
+        data = await paylink_get_status(transaction_no)
+        return {"order_status": data.get("orderStatus", "Pending"), "transaction_no": transaction_no}
+    except Exception as e:
+        return {"order_status": "Unknown", "error": str(e)[:100]}
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SEED
@@ -1988,6 +2313,58 @@ async def _gemini_generate(prompt: str) -> str:
 @api_router.post("/ai/generate-questions")
 async def ai_generate_questions(body: dict, admin=Depends(get_admin)):
     category_id = body.get("category_id", "")
+    mode = body.get("mode", "single")  # "single" or "full18"
+
+    if mode == "full18":
+        # Generate 6 easy + 6 medium + 6 hard for the category
+        cat = await db.categories.find_one({"id": category_id}, {"_id": 0})
+        cat_name = cat.get("name", "عامة") if cat else "عامة"
+        cat_desc = (cat.get("description") or cat_name) if cat else cat_name
+        existing_qs = await db.questions.find(
+            {"category_id": category_id}, {"_id": 0, "text": 1, "answer": 1}
+        ).to_list(200)
+        sample = existing_qs[-30:]
+        existing_hint = ""
+        if sample:
+            lines = "\n".join(f"- {q['text']}" for q in sample)
+            existing_hint = f"\n⚠️ لا تكرر هذه الأسئلة الموجودة:\n{lines}\n\n"
+
+        all_questions = []
+        for diff, label, count in [(300, "سهلة ومباشرة", 6), (600, "متوسطة الصعوبة", 6), (900, "صعبة ومتحدية", 6)]:
+            prompt = (
+                f"أنشئ بالضبط {count} سؤال ترفيهي لفئة \"{cat_name}\" بمستوى ({label}).\n"
+                f"وصف الفئة: {cat_desc}\n{existing_hint}"
+                "شروط أساسية:\n"
+                "- اكتب الأسئلة والإجابات باللغة العربية\n"
+                "- الأسئلة حماسية، متنوعة، وغير متكررة\n"
+                "- الإجابة قصيرة جداً: كلمة أو كلمتان فقط\n"
+                "- لا تُضِف أي شرح أو ترقيم خارج الـ JSON\n"
+                "- image_query: جملة قصيرة بالإنجليزية لاستخدامها في البحث عن صورة ذات صلة\n"
+                "أرجع JSON array فقط بالشكل التالي:\n"
+                '[{"text":"نص السؤال؟","answer":"الإجابة","image_query":"english search query"}]'
+            )
+            raw_text = await _gemini_generate(prompt)
+            m = re.search(r'\[.*\]', raw_text, re.DOTALL)
+            if m:
+                try:
+                    raw_list = json.loads(m.group())
+                    ts = datetime.now(timezone.utc).isoformat()
+                    for q in raw_list[:count]:
+                        txt = (q.get("text") or "").strip()
+                        ans = (q.get("answer") or "").strip()
+                        img_query = (q.get("image_query") or "").strip()
+                        if txt and ans:
+                            all_questions.append({
+                                "id": str(uuid.uuid4()), "category_id": category_id, "difficulty": diff,
+                                "text": txt, "answer": ans, "image_query": img_query,
+                                "image_url": "", "answer_image_url": "",
+                                "question_type": "text", "is_experimental": True, "created_at": ts,
+                            })
+                except json.JSONDecodeError:
+                    pass
+        return {"questions": all_questions, "count": len(all_questions)}
+
+    # Single difficulty mode (existing behavior)
     raw_diff = body.get("difficulty", 300)
     diff_map = {"easy": 300, "medium": 600, "hard": 900, "سهل": 300, "متوسط": 600, "صعب": 900}
     difficulty = diff_map.get(str(raw_diff).lower(), None) or (int(raw_diff) if str(raw_diff).isdigit() else 300)
@@ -2068,14 +2445,19 @@ async def ai_save_questions(body: dict, admin=Depends(get_admin)):
     questions = body.get("questions", [])
     if not questions:
         raise HTTPException(400, "لا توجد أسئلة للحفظ")
+    save_as_pending = body.get("pending", False)
+    target = db.pending_questions if save_as_pending else db.questions
     to_insert = []
     for q in questions:
         q.pop("_id", None)
         if not q.get("id"):
             q["id"] = str(uuid.uuid4())
+        if save_as_pending:
+            q["status"] = "pending"
         to_insert.append(q)
-    await db.questions.insert_many(to_insert)
-    return {"message": f"تم حفظ {len(to_insert)} سؤال", "count": len(to_insert)}
+    await target.insert_many(to_insert)
+    dest = "قائمة الانتظار" if save_as_pending else "الأسئلة"
+    return {"message": f"تم حفظ {len(to_insert)} سؤال في {dest}", "count": len(to_insert)}
 
 @api_router.get("/")
 async def root():
@@ -2581,6 +2963,20 @@ async def _subscription_daily_loop():
 async def startup_event():
     asyncio.create_task(_subscription_daily_loop())
     logger.info("Subscription notification loop started")
+    # DB Indexes for performance at scale
+    try:
+        await db.questions.create_index([("category_id", 1), ("difficulty", 1)])
+        await db.questions.create_index([("id", 1)], unique=True)
+        await db.users.create_index([("id", 1)], unique=True)
+        await db.users.create_index([("email", 1)], unique=True)
+        await db.game_sessions.create_index([("id", 1)], unique=True)
+        await db.pending_questions.create_index([("category_id", 1)])
+        await db.pending_questions.create_index([("id", 1)])
+        await db.payment_transactions.create_index([("transaction_no", 1)])
+        await db.payment_transactions.create_index([("user_id", 1)])
+        logger.info("DB indexes created/verified")
+    except Exception as e:
+        logger.warning(f"Index creation warning: {e}")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
