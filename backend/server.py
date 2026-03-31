@@ -586,9 +586,6 @@ async def autosave_question(q_id: str, body: dict, admin: dict = Depends(get_adm
     updates["updated_at"] = datetime.now(timezone.utc).isoformat()
     await db.questions.update_one({"id": q_id}, {"$set": updates})
     return {"saved": True, "updated_fields": list(updates.keys())}
-    val = body.get("is_experimental", True)
-    await db.questions.update_one({"id": q_id}, {"$set": {"is_experimental": val}})
-    return {"id": q_id, "is_experimental": val}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

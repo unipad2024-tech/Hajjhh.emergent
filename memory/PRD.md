@@ -1,173 +1,127 @@
-# HUJJAH (حُجّة) - Platform PRD & Progress
+# HUJJAH (حُجّة) — Product Requirements Document
 
 ## Original Problem Statement
-Upgrade the Hujjah trivia game into a professional SaaS platform with:
-- Strict Role-Based Access Control (RBAC) — Super Admin vs Staff
-- Admin Activity Log + Platform Analytics
-- Staff Dashboard + Staff Management
-- Email Notification System
-- AI Question Generation with Unsplash Image Search
-- Category Organization System (Groups)
-- Payment API Integration
+A professional Arabic SaaS trivia game platform with multi-team support, subscription tiers, and an admin dashboard for content management.
 
-## Tech Stack
-- Frontend: React + Tailwind CSS + Lucide React
-- Backend: FastAPI (Python) + JWT Auth + aiosmtplib (email)
-- Database: MongoDB
-- AI: Google Gemini (Emergent LLM Key) for question generation
-- Images: Unsplash API
+## Target Audience
+- Arabic-speaking players (Saudi Arabia and GCC)
+- Families, friends, corporate teams looking for entertainment
+- Content admins managing questions
+
+## Core Requirements
+1. Multi-team trivia game (Standard + Tournament modes)
+2. Question categories with difficulty levels (300/600/900)
+3. Premium subscription via payment gateway
+4. Admin panel for question/category/user management
+5. AI-powered question generation
+6. Soft-delete trash bin
+7. Role-based access (Super Admin vs Staff)
+
+---
 
 ## Architecture
+
 ```
 /app/
-├── backend/server.py    (~2510 lines, monolithic)
-├── frontend/src/
-│   ├── App.js
-│   ├── context/GameContext.js
-│   └── pages/
-│       ├── AdminDashboard.jsx   (~1900 lines)
-│       ├── AdminLoginPage.jsx
-│       ├── LoginPage.jsx
-│       ├── SignupPage.jsx
-│       ├── QuestionPage.jsx     (zoom modal added)
-│       ├── CategorySelectPage.jsx (group filter added)
-│       ├── GameBoardPage.jsx
-│       ├── TournamentBracketPage.jsx
-│       └── TournamentSetupPage.jsx
-└── memory/PRD.md
-```
-
-## RBAC Roles
-- **super_admin**: username=`admin`, password=`hujjah2024` — full access to all tabs
-- **staff**: stored in `admin_accounts` collection — content management only
-
-### Staff-Accessible Tabs
-- الأسئلة (questions), توليد AI, وضع التجربة (experimental)
-
-### Super Admin-Only Tabs
-- المستخدمون, الإحصاءات, الإعدادات, سجل النشاط, الموظفون + seed button
-
-## Key API Endpoints
-```
-Authentication:
-POST /api/admin/login        → {username, password} → {token, role, name}
-GET  /api/admin/verify       → {valid, role, name}
-
-RBAC (Super Admin only):
-GET  /api/admin/users
-PUT  /api/admin/users/{id}
-DEL  /api/admin/users/{id}
-POST /api/admin/users/{id}/gift-subscription
-GET  /api/admin/analytics
-GET  /api/admin/sessions
-GET  /api/admin/payments
-GET  /api/admin/logs
-POST /api/admin/staff
-GET  /api/admin/staff
-PUT  /api/admin/staff/{id}
-DEL  /api/admin/staff/{id}
-POST /api/admin/trigger-subscription-check
-
-Content (Both roles):
-GET/POST/PUT/DEL /api/categories
-GET/POST/PUT/DEL /api/questions
-POST /api/ai/generate-questions   (returns image_query per question)
-POST /api/ai/save-questions
-
-Category Groups (Admin):
-GET  /api/category-groups
-POST /api/category-groups
-PUT  /api/category-groups/{id}
-DEL  /api/category-groups/{id}
-POST /api/admin/seed-category-groups
-
-Unsplash:
-GET  /api/unsplash/search?query=...  (admin only)
-
-Payment v2:
-POST /api/payment/v2/initiate
-GET  /api/payment/v2/verify/{txn_id}
-POST /api/payment/v2/activate   (super_admin)
-POST /api/payment/v2/renew      (super_admin)
-POST /api/payment/v2/failure
+├── backend/
+│   ├── server.py              (~3000 lines monolith)
+│   ├── services/
+│   │   └── payment/
+│   │       └── paylinkService.py  (Paylink.sa gateway)
+│   └── requirements.txt
+└── frontend/
+    └── src/
+        └── pages/
+            ├── AdminDashboard.jsx
+            ├── GameBoardPage.jsx
+            ├── QuestionPage.jsx
+            ├── PricingPage.jsx
+            └── PaymentSuccessPage.jsx
 ```
 
 ## DB Collections
-- `users`: id, email, hashed_password, subscription_type, subscription_expires_at, notify_warning_sent, notify_expired_sent
-- `categories`: id, name, icon, image_url, is_premium, is_active, group_id
-- `category_groups`: id, name, icon, color, order, created_at
-- `questions`: id, text, answer, image_query, image_url, answer_image_url, category_id, difficulty, is_experimental
-- `admin_accounts`: id, username, password_hash, display_name, created_at
-- `admin_logs`: id, admin_name, admin_role, action, target_type, target_name, details, timestamp
-- `game_sessions`: id, team1, team2, status, created_at
-- `payment_transactions`: id, user_id, plan_id, amount, currency, payment_status, status
+- `users` — email, role, subscription_status, answered_question_ids
+- `categories` — name, group_id, is_premium
+- `category_groups` — name
+- `questions` — text, answer, difficulty, category_id, image_url, answer_image_url, image_query, deleted_at
+- `pending_questions` — same as questions + status="pending" (staging area)
+- `game_sessions` — team info, used_questions, scores
+- `payment_transactions` — Paylink transaction tracking
+- `admin_activity_logs` — audit trail
 
-## Environment Variables
-```
-JWT_SECRET_KEY, ADMIN_PASSWORD
-MONGO_URL, DB_NAME
-STRIPE_API_KEY, PAYMENT_API_ID, PAYMENT_API_KEY
-EMAIL_USER=hujjahgame@gmail.com, EMAIL_PASS=(Gmail App Password)
-UNSPLASH_API_KEY=(provided key)
-GEMINI_API_KEY (or Emergent LLM Key)
-```
+---
 
-## What's Been Implemented
+## What Has Been Implemented
 
-### Session 1-12 (Previous)
-- Full trivia game: Standard + Tournament modes (up to 8 teams)
-- Game Master control panel
-- Premium categories system + is_active toggle
-- AI question generation (Google Gemini)
-- 3 letter-based categories seeded (A, B, Q)
-- Tournament bracket redesign
-- TV-friendly large screen UI
+### Sprint 1 (Prior sessions)
+- [x] Basic gameplay (Standard + Tournament modes)
+- [x] Category system with groups
+- [x] Admin login with JWT
+- [x] RBAC (Super Admin vs Staff)
+- [x] Admin activity logs
+- [x] Soft-delete trash bin (restore)
+- [x] Auto-save for question drafts
+- [x] Password visibility toggles
+- [x] SMTP email cron for subscription expiry notifications
+- [x] AI question generation (Gemini) with Unsplash image fetching
+- [x] Question deduplication in AI generation
 
-### Session 13 — RBAC + Logs + Payments (Feb 2026)
-- RBAC: Super Admin vs Staff with JWT sub_role
-- Admin Activity Log (admin_logs collection, log_admin_action helper)
-- Staff Management (CRUD via admin_accounts collection)
-- Gift Subscription endpoint
-- Enhanced Analytics (categories.total/active/premium/most_popular)
-- Payment v2 endpoints (initiate, verify, activate, renew, failure)
-- Role badge in dashboard header, filtered tabs by role
+### Sprint 2 — 2026-02 (Current session)
+- [x] **Paylink.sa Payment Gateway** — `services/payment/paylinkService.py`
+  - Auth → Create Invoice → Redirect to Paylink → Verify payment
+  - Endpoints: POST /api/paylink/initiate, GET /api/paylink/verify/{txn}, GET /api/paylink/status/{txn}
+- [x] **AI Question Import System** — POST /api/admin/questions/import
+  - Supports Excel (.xlsx/.xls), CSV, JSON
+  - Auto-maps difficulty: 300=Easy, 600=Medium, 900=Hard
+- [x] **Admin Approval Workflow (Staging)**
+  - GET /api/admin/questions/pending
+  - POST /api/admin/questions/{id}/approve
+  - POST /api/admin/questions/{id}/reject
+  - POST /api/admin/questions/approve-all
+  - "مراجعة الأسئلة" tab in AdminDashboard
+- [x] **AI Generate 18 Questions (6+6+6)** — mode="full18"
+  - Saves directly to pending queue for review
+- [x] **Fixed Gameplay Image Bug** — Race condition in parallel Unsplash fetches
+  - Collect all results first, then batch-update state
+- [x] **Soft-deleted question filter in gameplay** — `deleted_at: None` filter
+- [x] **DB Indexing** on startup for scale (8000+ questions)
+- [x] **PricingPage** updated for Paylink (name/mobile modal)
+- [x] **PaymentSuccessPage** updated for Paylink transaction verification
 
-### Session 15 — Data Safety + AI Dedup + Payments (Feb 2026)
-- **CRITICAL FIX: Data Loss Prevention**
-  - Removed "Add Data" seed button from frontend completely
-  - Seed endpoint now NEVER deletes/overwrites — only adds items not already in DB
-  - Removed dangerous `force=True` parameter from seed endpoint
-- **Question Restore System**
-  - Deleted questions backed up to `deleted_questions` collection before removal
-  - "سلة المحذوفات" restore panel in questions tab
-  - Restore any deleted question with one click
-  - Enhanced delete confirmation dialog shows question preview
-- **Auto-Save**: Debounced auto-save (1.5s) for question text and answer fields
-- **AI Deduplication**: AI generation now fetches existing questions and instructs AI not to repeat them
-- **Payment API Keys Configured**: PAYMENT_API_ID=APP_ID_1774162201273, PAYMENT_API_KEY configured in backend .env
-- **New Endpoints**: PATCH /questions/{id}/autosave, GET /admin/deleted-questions, POST /admin/restore-question/{id}
-- **Password Toggle**: Eye icon on Login, Signup (2 fields), AdminLogin pages
-- **Image Zoom Modal**: Click on question/answer images → fullscreen overlay (ZoomIn icon hover)
-- **AI + Unsplash**: image_query field per generated question, auto-fetch from Unsplash in review UI
-- **Email Notifications**: Gmail SMTP (aiosmtplib), daily subscription check loop, warning (3 days before) + expired emails in Arabic HTML
-- **Category Groups**: 10 default groups (علمي، رياضة، تاريخ، etc.), group_id on categories, group filter tabs in CategorySelectPage, grouped sidebar in AdminDashboard
-- **Admin Dashboard**: Group filter in category sidebar, Group assignment dropdown in category form, Group management (add/edit/delete groups)
-- **Group Form Modal**: Create/edit groups with icon, color, order
+---
 
-## P1/P2 Remaining Features
-### P1 — Refactoring (Technical Debt)
-- server.py (~2510 lines) → split into modules: auth.py, payments.py, categories.py, admin.py, email.py
-- AdminDashboard.jsx (~1900 lines) → AnalyticsTab, StaffTab, LogsTab, AITab sub-components
+## P0/P1/P2 Remaining Backlog
 
-### P2 — Future Features
-- Real payment gateway integration (requires knowing PAYMENT_API_ID gateway type)
-- User self-service subscription portal
-- Game session analytics (average duration, win rates)
-- Email unsubscribe link
-- Push notifications (Firebase)
-- Multi-language support (EN/AR)
-- Category image from Unsplash (auto-search on category name)
+### P0 — Critical
+- [ ] Verify Paylink integration works end-to-end with real payment (requires live environment)
+- [ ] Question image display: confirm images are correctly saved when admin approves AI questions with Unsplash images in pending review
 
-## Credentials
-- Admin: username=admin, password=hujjah2024
-- App URL: https://hujjah-trivia.preview.emergentagent.com
+### P1 — Important
+- [ ] Question Repetition Prevention — currently uses `answered_question_ids` per user (basic). Could enhance with `user_answered_questions` collection for richer tracking
+- [ ] AI Image Pipeline for pending questions — when approving, auto-fetch Unsplash if `image_query` present but `image_url` empty
+
+### P2 — Nice to Have
+- [ ] Pagination for question list (currently loads all in memory)
+- [ ] Question search/filter by text in admin
+- [ ] Bulk question edit in admin
+- [ ] Tournament bracket improvements
+- [ ] User profile page with stats
+- [ ] Push notifications for subscription expiry
+
+---
+
+## 3rd Party Integrations
+- **Paylink.sa** — Payment gateway (PAYMENT_API_ID, PAYMENT_API_KEY in .env)
+- **Google Gemini** — AI question generation (via Emergent LLM Key)
+- **Unsplash API** — Question images
+- **SMTP/Gmail** — Email notifications
+
+## Key API Endpoints
+- `POST /api/paylink/initiate` — Start Paylink payment
+- `GET /api/paylink/verify/{txn}` — Verify and activate subscription
+- `POST /api/admin/questions/import` — File upload (Excel/CSV/JSON)
+- `GET /api/admin/questions/pending` — Staging area
+- `POST /api/admin/questions/{id}/approve` — Move to live
+- `POST /api/admin/questions/approve-all` — Bulk approve
+- `POST /api/ai/generate-questions` — AI generation (mode=full18 for 18 questions)
+- `POST /api/game/session/{id}/question` — Get next question (excludes deleted)
