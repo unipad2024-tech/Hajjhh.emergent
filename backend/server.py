@@ -647,38 +647,50 @@ def _parse_questions_df(df: "pd.DataFrame", category_id: str) -> list:
     return questions
 
 
-AI_EXTRACT_PROMPT = """أنت مساعد ذكي لاستخراج أسئلة من المحتوى العربي.
+AI_EXTRACT_PROMPT = """أنت خبير في استخراج الأسئلة من المحتوى العربي.
 
-استخرج جميع الأسئلة والإجابات من النص التالي.
-- الأسئلة والإجابات باللغة العربية
-- إذا لم تجد مستوى الصعوبة، افترض 300 (سهل)
-- image_query: كلمة بحث إنجليزية مناسبة للصورة
+مهمتك: استخراج جميع الأسئلة والإجابات من النص التالي.
 
-أعد JSON array فقط بالشكل التالي:
-[{"text":"نص السؤال؟","answer":"الإجابة","difficulty":300,"image_query":"search term"}]
+قواعد صارمة:
+1. استخرج نص الإجابة الكاملة — لا تكتب 'أ' أو 'ب' أو 'ج' أو 'د' أو A/B/C/D أبداً
+2. إذا كانت أسئلة متعددة الاختيارات: اكتب نص الإجابة الصحيحة كاملاً
+3. difficulty: حدد المستوى بدقة: 300 (سهل/معلومات عامة) أو 600 (متوسط/يحتاج تفكير) أو 900 (صعب/متخصص)
+4. لا تجمع السؤال مع الإجابة في نفس الحقل
+5. استخرج كل الأسئلة الموجودة — لا تتجاهل أي منها
+6. image_query: جملة إنجليزية قصيرة مناسبة للبحث عن صورة
 
-النص:
+أعد JSON array فقط بدون أي نص آخر:
+[{"text":"نص السؤال؟","answer":"الإجابة الكاملة","difficulty":300,"image_query":"search term"}]
+
 """
 
+CHUNK_SIZE = 12000  # chars per AI call
 
-async def _extract_via_ai(text_content: str, category_id: str) -> list:
-    """Use Gemini to extract Q&A from plain text."""
-    prompt = AI_EXTRACT_PROMPT + text_content[:8000]
-    raw = await _gemini_generate(prompt)
-    m = re.search(r'\[.*?\]', raw, re.DOTALL)
+
+async def _parse_ai_response_to_questions(raw: str, category_id: str, ai_engine: str = "claude", extra_prompt: str = "") -> list:
+    """Parse AI response JSON → question dicts. Returns empty list on failure."""
+    # Try to extract JSON array
+    m = re.search(r'\[\s*\{.*?\}\s*\]', raw, re.DOTALL) or re.search(r'\[.*\]', raw, re.DOTALL)
     if not m:
         return []
     try:
         items = json.loads(m.group())
     except json.JSONDecodeError:
-        return []
+        # Try to repair broken JSON
+        try:
+            items = json.loads(m.group().replace("'", '"'))
+        except Exception:
+            return []
 
     ts = datetime.now(timezone.utc).isoformat()
     questions = []
     for r in items:
-        text = str(r.get("text") or "").strip()
-        ans  = str(r.get("answer") or "").strip()
+        text = str(r.get("text") or r.get("question") or "").strip()
+        ans  = str(r.get("answer") or r.get("إجابة") or "").strip()
         if not text or not ans:
+            continue
+        # Skip answers that are just choice letters
+        if ans.strip() in {"أ", "ب", "ج", "د", "A", "B", "C", "D", "1", "2", "3", "4"}:
             continue
         questions.append({
             "id":               str(uuid.uuid4()),
@@ -694,6 +706,49 @@ async def _extract_via_ai(text_content: str, category_id: str) -> list:
             "status":           "pending",
             "created_at":       ts,
         })
+    return questions
+
+
+async def _extract_via_ai(text_content: str, category_id: str, extra_prompt: str = "", ai_engine: str = "claude") -> list:
+    """Extract Q&A from plain text using AI, with chunked processing for large files."""
+    custom = f"\nتعليمات المشرف: {extra_prompt}\n" if extra_prompt else ""
+    questions = []
+    seen_texts = set()
+
+    # Chunk large documents
+    chunks = []
+    if len(text_content) <= CHUNK_SIZE:
+        chunks = [text_content]
+    else:
+        # Split by double newline first (paragraph boundary)
+        paras = text_content.split("\n\n")
+        current = ""
+        for para in paras:
+            if len(current) + len(para) > CHUNK_SIZE:
+                if current.strip():
+                    chunks.append(current.strip())
+                current = para
+            else:
+                current += "\n\n" + para
+        if current.strip():
+            chunks.append(current.strip())
+
+    logger.info(f"File import: {len(chunks)} chunks, total {len(text_content)} chars")
+
+    for i, chunk in enumerate(chunks):
+        prompt = AI_EXTRACT_PROMPT + custom + f"\n--- الجزء {i+1}/{len(chunks)} ---\n" + chunk
+        try:
+            raw = await _ai_generate(prompt, prefer=ai_engine)
+            chunk_qs = await _parse_ai_response_to_questions(raw, category_id, ai_engine, extra_prompt)
+            for q in chunk_qs:
+                if q["text"] not in seen_texts:
+                    seen_texts.add(q["text"])
+                    questions.append(q)
+        except Exception as e:
+            logger.warning(f"Chunk {i+1} AI extraction failed: {e}")
+            continue
+        await asyncio.sleep(0.5)  # Rate limit between chunks
+
     return questions
 
 
@@ -778,12 +833,15 @@ async def _extract_image_questions(content: bytes, mime: str, category_id: str) 
 async def import_questions(
     file: UploadFile = File(...),
     category_id: str = "",
+    extra_prompt: str = "",
+    ai_engine: str = "claude",
     admin: dict = Depends(get_admin),
 ):
-    """Import questions from any file type (Excel/CSV/JSON/PDF/Word/Image/TXT)."""
+    """Import questions from any file type (Excel/CSV/JSON/PDF/Word/Image/TXT) with AI extraction."""
     filename = (file.filename or "untitled").lower()
     content  = await file.read()
     questions = []
+    extra_prompt = extra_prompt.strip()
 
     try:
         if filename.endswith(".json"):
@@ -816,28 +874,41 @@ async def import_questions(
             questions = _parse_questions_df(df, category_id)
         elif filename.endswith(".txt"):
             text_content = content.decode("utf-8", errors="replace")
-            questions = await _extract_via_ai(text_content, category_id)
+            questions = await _extract_via_ai(text_content, category_id, extra_prompt, ai_engine)
         elif filename.endswith(".pdf"):
-            pdf_text = await _extract_pdf_text(content)
-            if not pdf_text.strip():
-                raise HTTPException(422, "لم يُمكن استخراج نص من الـ PDF. تأكد أنه PDF نصي (ليس صوراً)")
-            questions = await _extract_via_ai(pdf_text, category_id)
+            # Try Gemini file analysis first, fallback to text extraction
+            tmp_path = f"/tmp/upload_{uuid.uuid4().hex}.pdf"
+            with open(tmp_path, "wb") as f:
+                f.write(content)
+            try:
+                prompt = AI_EXTRACT_PROMPT + (f"\nتعليمات: {extra_prompt}\n" if extra_prompt else "")
+                prompt += "\nاستخرج جميع الأسئلة من هذا الملف — لا تتجاهل أي سؤال."
+                raw = await _gemini_analyze_file(tmp_path, "application/pdf", prompt)
+                questions = await _parse_ai_response_to_questions(raw, category_id, ai_engine, extra_prompt)
+            except Exception:
+                # Fallback: text extraction
+                pdf_text = await _extract_pdf_text(content)
+                if not pdf_text.strip():
+                    raise HTTPException(422, "لم يُمكن استخراج نص من الـ PDF")
+                questions = await _extract_via_ai(pdf_text, category_id, extra_prompt, ai_engine)
+            finally:
+                if os.path.exists(tmp_path): os.remove(tmp_path)
         elif filename.endswith((".docx", ".doc")):
             doc_text = await _extract_docx_text(content)
             if not doc_text.strip():
                 raise HTTPException(422, "لم يُمكن استخراج نص من ملف Word")
-            questions = await _extract_via_ai(doc_text, category_id)
+            questions = await _extract_via_ai(doc_text, category_id, extra_prompt, ai_engine)
         elif filename.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")):
             ext_to_mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                            ".webp": "image/webp", ".gif": "image/gif"}
-            ext = "." + filename.rsplit(".", 1)[-1]
+            ext  = "." + filename.rsplit(".", 1)[-1]
             mime = ext_to_mime.get(ext, "image/jpeg")
             questions = await _extract_image_questions(content, mime, category_id)
         else:
-            # Try AI extraction as generic text
+            # Try as UTF-8 text → AI extraction
             try:
                 text_content = content.decode("utf-8", errors="replace")
-                questions = await _extract_via_ai(text_content, category_id)
+                questions = await _extract_via_ai(text_content, category_id, extra_prompt, ai_engine)
             except Exception:
                 raise HTTPException(400, "صيغة الملف غير مدعومة")
     except HTTPException:
@@ -846,7 +917,7 @@ async def import_questions(
         raise HTTPException(422, f"خطأ في قراءة الملف: {str(e)[:200]}")
 
     if not questions:
-        raise HTTPException(400, "لم يتم العثور على أسئلة صالحة في الملف — تأكد من التنسيق أو جرب ملفاً آخر")
+        raise HTTPException(400, "لم يتم العثور على أسئلة صالحة — تأكد من الملف أو جرب تعليمات مختلفة")
 
     await db.pending_questions.insert_many(questions)
     await log_admin_action(admin, "رفع ملف أسئلة", "أسئلة معلقة", filename,
@@ -2502,14 +2573,30 @@ async def upload_image(request: Request, file: UploadFile = File(...), admin=Dep
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ══════════════════════════════════════════════════════════════════════════════
-# AI QUESTION GENERATOR  (Google Gemini 2.0 Flash – direct REST)
+# AI ENGINE  (Claude primary · Gemini fallback · file-aware)
 # ══════════════════════════════════════════════════════════════════════════════
 
+async def _claude_generate(prompt: str) -> str:
+    """Generate text with Claude claude-sonnet-4-5-20250929 via emergentintegrations."""
+    api_key = os.environ.get("CLAUDE_API_KEY", "")
+    if not api_key:
+        raise ValueError("CLAUDE_API_KEY not set")
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    chat = LlmChat(
+        api_key=api_key,
+        session_id=f"hujjah-{uuid.uuid4().hex[:8]}",
+        system_message="أنت مساعد ذكي متخصص في توليد أسئلة الترفيه العربية."
+    ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+    resp = await chat.send_message(UserMessage(text=prompt))
+    return resp if isinstance(resp, str) else str(resp)
+
+
 async def _gemini_generate(prompt: str) -> str:
+    """Generate text with Gemini 2.5 Flash via direct REST."""
     api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
         raise HTTPException(500, "GEMINI_API_KEY غير مضبوط في ملف البيئة")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key={api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     async with httpx.AsyncClient(timeout=60) as client:
         r = await client.post(url, json=payload)
@@ -2522,134 +2609,140 @@ async def _gemini_generate(prompt: str) -> str:
         raise HTTPException(500, "لم يُرسل Gemini استجابة نصية")
 
 
+async def _ai_generate(prompt: str, prefer: str = "claude") -> str:
+    """Try Claude first, fall back to Gemini if unavailable."""
+    if prefer == "claude" and os.environ.get("CLAUDE_API_KEY"):
+        try:
+            return await _claude_generate(prompt)
+        except Exception as ce:
+            logger.warning(f"Claude failed, falling back to Gemini: {ce}")
+    return await _gemini_generate(prompt)
+
+
+async def _gemini_analyze_file(file_path: str, mime_type: str, prompt: str) -> str:
+    """Use Gemini with file attachment (supports PDF, images, etc.)."""
+    api_key = os.environ.get("GEMINI_API_KEY", "")
+    if not api_key:
+        raise HTTPException(500, "GEMINI_API_KEY غير مضبوط")
+    from emergentintegrations.llm.chat import LlmChat, UserMessage, FileContentWithMimeType
+    chat = LlmChat(
+        api_key=api_key,
+        session_id=f"hujjah-file-{uuid.uuid4().hex[:8]}",
+        system_message="أنت مساعد ذكي لتحليل الملفات واستخراج الأسئلة."
+    ).with_model("gemini", "gemini-2.5-flash")
+    file_obj = FileContentWithMimeType(file_path=file_path, mime_type=mime_type)
+    msg = UserMessage(text=prompt, file_contents=[file_obj])
+    resp = await chat.send_message(msg)
+    return resp if isinstance(resp, str) else str(resp)
+
+
+async def _fetch_unsplash_image(query: str) -> str:
+    """Fetch a single Unsplash image URL for a query. Returns URL or empty string."""
+    if not query:
+        return ""
+    key = os.environ.get("UNSPLASH_API_KEY", "")
+    if not key:
+        return ""
+    try:
+        async with httpx.AsyncClient(timeout=8) as c:
+            r = await c.get(
+                "https://api.unsplash.com/photos/random",
+                params={"query": query, "orientation": "landscape"},
+                headers={"Authorization": f"Client-ID {key}"},
+            )
+            if r.status_code == 200:
+                return r.json().get("urls", {}).get("regular", "")
+    except Exception:
+        pass
+    return ""
+
+
 @api_router.post("/ai/generate-questions")
 async def ai_generate_questions(body: dict, admin=Depends(get_admin)):
-    category_id = body.get("category_id", "")
-    mode = body.get("mode", "single")  # "single" or "full18"
+    category_id      = body.get("category_id", "")
+    mode             = body.get("mode", "single")
+    ai_engine        = body.get("ai_engine", "claude")      # "claude" | "gemini"
+    fetch_images     = body.get("fetch_images", True)        # auto-fetch Unsplash
+    extra_prompt     = (body.get("prompt_description") or body.get("extra_prompt") or "").strip()
 
-    if mode == "full18":
-        # Generate 6 easy + 6 medium + 6 hard for the category
-        cat = await db.categories.find_one({"id": category_id}, {"_id": 0})
-        cat_name = cat.get("name", "عامة") if cat else "عامة"
-        cat_desc = (cat.get("description") or cat_name) if cat else cat_name
-        existing_qs = await db.questions.find(
-            {"category_id": category_id}, {"_id": 0, "text": 1, "answer": 1}
-        ).to_list(200)
-        sample = existing_qs[-30:]
-        existing_hint = ""
-        if sample:
-            lines = "\n".join(f"- {q['text']}" for q in sample)
-            existing_hint = f"\n⚠️ لا تكرر هذه الأسئلة الموجودة:\n{lines}\n\n"
+    cat      = await db.categories.find_one({"id": category_id}, {"_id": 0})
+    cat_name = cat.get("name", "عامة") if cat else "عامة"
+    cat_desc = (cat.get("description") or cat_name) if cat else cat_name
 
-        all_questions = []
-        for diff, label, count in [(300, "سهلة ومباشرة", 6), (600, "متوسطة الصعوبة", 6), (900, "صعبة ومتحدية", 6)]:
-            prompt = (
-                f"أنشئ بالضبط {count} سؤال ترفيهي لفئة \"{cat_name}\" بمستوى ({label}).\n"
-                f"وصف الفئة: {cat_desc}\n{existing_hint}"
-                "شروط أساسية:\n"
-                "- اكتب الأسئلة والإجابات باللغة العربية\n"
-                "- الأسئلة حماسية، متنوعة، وغير متكررة\n"
-                "- الإجابة قصيرة جداً: كلمة أو كلمتان فقط\n"
-                "- لا تُضِف أي شرح أو ترقيم خارج الـ JSON\n"
-                "- image_query: جملة قصيرة بالإنجليزية لاستخدامها في البحث عن صورة ذات صلة\n"
-                "أرجع JSON array فقط بالشكل التالي:\n"
-                '[{"text":"نص السؤال؟","answer":"الإجابة","image_query":"english search query"}]'
-            )
-            raw_text = await _gemini_generate(prompt)
-            m = re.search(r'\[.*\]', raw_text, re.DOTALL)
-            if m:
-                try:
-                    raw_list = json.loads(m.group())
-                    ts = datetime.now(timezone.utc).isoformat()
-                    for q in raw_list[:count]:
-                        txt = (q.get("text") or "").strip()
-                        ans = (q.get("answer") or "").strip()
-                        img_query = (q.get("image_query") or "").strip()
-                        if txt and ans:
-                            all_questions.append({
-                                "id": str(uuid.uuid4()), "category_id": category_id, "difficulty": diff,
-                                "text": txt, "answer": ans, "image_query": img_query,
-                                "image_url": "", "answer_image_url": "",
-                                "question_type": "text", "is_experimental": True, "created_at": ts,
-                            })
-                except json.JSONDecodeError:
-                    pass
-        return {"questions": all_questions, "count": len(all_questions)}
-
-    # Single difficulty mode (existing behavior)
-    raw_diff = body.get("difficulty", 300)
-    diff_map = {"easy": 300, "medium": 600, "hard": 900, "سهل": 300, "متوسط": 600, "صعب": 900}
-    difficulty = diff_map.get(str(raw_diff).lower(), None) or (int(raw_diff) if str(raw_diff).isdigit() else 300)
-    count = min(int(body.get("count", 10)), 20)
-    prompt_description = (body.get("prompt_description") or "").strip()
-
-    cat = await db.categories.find_one({"id": category_id}, {"_id": 0})
-    cat_name   = cat.get("name", "عامة") if cat else "عامة"
-    cat_desc   = (cat.get("description") or cat_name) if cat else cat_name
-    diff_label = "سهلة ومباشرة" if difficulty == 300 else ("متوسطة الصعوبة" if difficulty == 600 else "صعبة ومتحدية")
-
-    # Fetch existing questions to avoid duplication
     existing_qs = await db.questions.find(
-        {"category_id": category_id},
-        {"_id": 0, "text": 1, "answer": 1}
-    ).to_list(200)
+        {"category_id": category_id, "deleted_at": None},
+        {"_id": 0, "text": 1}
+    ).to_list(300)
     existing_hint = ""
     if existing_qs:
-        sample = existing_qs[-20:]  # last 20 to keep prompt size reasonable
-        existing_lines = "\n".join(f"- {q['text']}" for q in sample)
-        existing_hint = (
-            f"\n⚠️ لا تكرر هذه الأسئلة الموجودة مسبقاً في قاعدة البيانات:\n"
-            f"{existing_lines}\n\n"
-        )
+        lines = "\n".join(f"- {q['text']}" for q in existing_qs[-30:])
+        existing_hint = f"\n⚠️ لا تكرر هذه الأسئلة الموجودة:\n{lines}\n\n"
 
-    custom_instruction = ""
-    if prompt_description:
-        custom_instruction = f"\nتعليمات إضافية من المستخدم: {prompt_description}\n"
+    custom = f"\nتعليمات المشرف: {extra_prompt}\n" if extra_prompt else ""
 
-    prompt = (
-        f"أنشئ بالضبط {count} سؤال ترفيهي لفئة \"{cat_name}\" بمستوى ({diff_label}).\n"
-        f"وصف الفئة: {cat_desc}\n"
-        f"{custom_instruction}\n"
-        "شروط أساسية:\n"
-        "- اكتب الأسئلة والإجابات باللغة العربية\n"
-        "- الأسئلة حماسية، متنوعة، وغير متكررة\n"
-        "- الإجابة قصيرة جداً: كلمة أو كلمتان فقط\n"
-        "- لا تُضِف أي شرح أو ترقيم خارج الـ JSON\n"
-        "- image_query: جملة قصيرة بالإنجليزية لاستخدامها في البحث عن صورة ذات صلة (للإجابة أو السؤال)\n"
-        f"{existing_hint}"
-        "أرجع JSON array فقط بالشكل التالي وبدون أي نص قبله أو بعده:\n"
-        '[{"text":"نص السؤال؟","answer":"الإجابة","image_query":"english search query"}]'
+    base_rules = (
+        "- اكتب الأسئلة والإجابات باللغة العربية الفصيحة\n"
+        "- الأسئلة متنوعة، حماسية، وغير متكررة\n"
+        "- الإجابة نص قصير (كلمة إلى ثلاث كلمات) — لا تكتب 'أ' أو 'ب' أو 'ج' أبداً\n"
+        "- image_query: جملة إنجليزية قصيرة مناسبة للبحث عن صورة\n"
+        "- أرجع JSON array فقط بدون أي شرح:\n"
+        '[{"text":"...؟","answer":"...","image_query":"...","difficulty":300}]'
     )
 
-    raw_text = await _gemini_generate(prompt)
-    m = re.search(r'\[.*\]', raw_text, re.DOTALL)
-    if not m:
-        raise HTTPException(500, "لم يُرسل Gemini JSON صالحاً")
-    try:
-        raw_list = json.loads(m.group())
-    except json.JSONDecodeError:
-        raise HTTPException(500, "فشل في قراءة JSON المُرسَل من Gemini")
-
-    questions = []
-    for q in raw_list[:count]:
-        txt = (q.get("text") or "").strip()
-        ans = (q.get("answer") or "").strip()
-        img_query = (q.get("image_query") or "").strip()
-        if txt and ans:
-            questions.append({
-                "id":               str(uuid.uuid4()),
-                "category_id":      category_id,
-                "difficulty":       difficulty,
-                "text":             txt,
-                "answer":           ans,
-                "image_query":      img_query,
-                "image_url":        "",
-                "answer_image_url": "",
-                "question_type":    "text",
-                "is_experimental":  True,
-                "created_at":       datetime.now(timezone.utc).isoformat(),
+    async def _gen(count: int, diff: int) -> list:
+        diff_label = {300: "سهلة", 600: "متوسطة", 900: "صعبة"}.get(diff, "متوسطة")
+        prompt = (
+            f"أنشئ بالضبط {count} سؤال لفئة \"{cat_name}\" بمستوى {diff_label} ({diff} نقطة).\n"
+            f"وصف الفئة: {cat_desc}\n"
+            f"{custom}{existing_hint}{base_rules}"
+        )
+        raw = await _ai_generate(prompt, prefer=ai_engine)
+        m = re.search(r'\[.*?\]', raw, re.DOTALL) or re.search(r'\[.*\]', raw, re.DOTALL)
+        if not m:
+            return []
+        try:
+            items = json.loads(m.group())
+        except json.JSONDecodeError:
+            return []
+        ts = datetime.now(timezone.utc).isoformat()
+        result = []
+        for q in items[:count]:
+            txt = (q.get("text") or "").strip()
+            ans = (q.get("answer") or "").strip()
+            # Skip if answer looks like a choice letter
+            if not txt or not ans or ans in {"أ", "ب", "ج", "د", "A", "B", "C", "D"}:
+                continue
+            result.append({
+                "id": str(uuid.uuid4()), "category_id": category_id, "difficulty": diff,
+                "text": txt, "answer": ans,
+                "image_query": (q.get("image_query") or "").strip(),
+                "image_url": "", "answer_image_url": "",
+                "question_type": "text", "is_experimental": True, "created_at": ts,
             })
-    return {"questions": questions, "count": len(questions)}
+        return result
+
+    if mode == "full18":
+        all_questions = []
+        for diff, count in [(300, 6), (600, 6), (900, 6)]:
+            all_questions.extend(await _gen(count, diff))
+    else:
+        raw_diff = body.get("difficulty", 300)
+        diff_map = {"easy": 300, "medium": 600, "hard": 900, "سهل": 300, "متوسط": 600, "صعب": 900}
+        difficulty = diff_map.get(str(raw_diff).lower()) or (int(raw_diff) if str(raw_diff).isdigit() else 300)
+        count      = min(int(body.get("count", 10)), 30)
+        all_questions = await _gen(count, difficulty)
+
+    # Auto-fetch Unsplash images in parallel
+    if fetch_images and all_questions:
+        image_results = await asyncio.gather(
+            *[_fetch_unsplash_image(q["image_query"]) for q in all_questions],
+            return_exceptions=True,
+        )
+        for i, url in enumerate(image_results):
+            if isinstance(url, str) and url:
+                all_questions[i]["image_url"] = url
+
+    return {"questions": all_questions, "count": len(all_questions)}
 
 
 @api_router.post("/ai/save-questions")
