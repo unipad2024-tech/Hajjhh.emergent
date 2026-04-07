@@ -16,6 +16,167 @@ const emptyQuestion = {
   image_url: "", answer_image_url: "", question_type: "text",
 };
 
+/* ── PendingQuestionCard — standalone component to avoid stale-closure ── */
+function PendingQuestionCard({ q, i, categories, headers, onApprove, onReject, onUpdate }) {
+  const diffColor = q.difficulty === 300 ? "green" : q.difficulty === 600 ? "amber" : "red";
+  const diffLabel = q.difficulty === 300 ? "سهل" : q.difficulty === 600 ? "متوسط" : "صعب";
+  const cat = categories.find(c => c.id === q.category_id);
+  const [editImg, setEditImg] = useState(false);
+  const [editAnsImg, setEditAnsImg] = useState(false);
+  const [tmpImg, setTmpImg] = useState(q.image_url || "");
+  const [tmpAnsImg, setTmpAnsImg] = useState(q.answer_image_url || "");
+  const [saving, setSaving] = useState(false);
+
+  const saveField = async (field, val) => {
+    setSaving(true);
+    try {
+      await axios.patch(`${API}/admin/questions/pending/${q.id}`, { [field]: val }, { headers });
+      onUpdate(q.id, { [field]: val });
+      toast.success("تم الحفظ");
+    } catch { toast.error("خطأ في الحفظ"); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div
+      data-testid={`pending-q-${i}`}
+      className={`bg-white border rounded-2xl overflow-hidden border-${diffColor}-200`}
+    >
+      <div className={`h-1 w-full bg-${diffColor}-400`} />
+      <div className="p-4">
+        <div className="flex items-start justify-between gap-3">
+          {/* Left: content */}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
+              <span className={`text-[11px] font-black px-2 py-0.5 rounded-full bg-${diffColor}-100 text-${diffColor}-800`}>
+                {diffLabel} · {q.difficulty}
+              </span>
+              {cat && (
+                <span className="text-[11px] px-2 py-0.5 rounded-full bg-primary/10 text-primary/60 font-bold">
+                  {cat.icon} {cat.name}
+                </span>
+              )}
+            </div>
+            <div className="font-bold text-primary mb-1">{q.text}</div>
+            <div className="text-sm text-primary/60 mb-3">
+              الإجابة: <span className="font-black text-primary">{q.answer}</span>
+            </div>
+
+            {/* Images row */}
+            <div className="flex gap-3 flex-wrap">
+              {/* Question Image */}
+              <div className="flex flex-col gap-1">
+                <span className="text-xs font-black text-primary/50">صورة السؤال</span>
+                {q.image_url && !editImg ? (
+                  <div className="flex items-center gap-2">
+                    <img
+                      src={q.image_url}
+                      alt="سؤال"
+                      className="h-14 w-20 rounded-lg object-cover border border-primary/10"
+                      onError={e => e.target.style.display = "none"}
+                    />
+                    <button
+                      onClick={() => { setTmpImg(q.image_url || ""); setEditImg(true); }}
+                      className="text-xs text-primary/50 hover:text-primary border border-primary/20 px-2 py-1 rounded-lg transition-all"
+                    >
+                      تغيير
+                    </button>
+                  </div>
+                ) : editImg ? (
+                  <div className="flex gap-1.5 items-center">
+                    <input
+                      data-testid={`pending-q-img-input-${q.id}`}
+                      value={tmpImg}
+                      onChange={e => setTmpImg(e.target.value)}
+                      placeholder="رابط الصورة..."
+                      className="border border-primary/20 rounded-lg px-2 py-1 text-xs outline-none w-40"
+                    />
+                    <button
+                      onClick={() => { saveField("image_url", tmpImg); setEditImg(false); }}
+                      disabled={saving}
+                      className="text-xs bg-green-600 text-white px-2 py-1 rounded-lg font-black disabled:opacity-50"
+                    >✓</button>
+                    <button onClick={() => setEditImg(false)} className="text-xs text-primary/50 px-1">✕</button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => { setTmpImg(""); setEditImg(true); }}
+                    className="text-xs text-primary/40 border border-dashed border-primary/20 px-3 py-1.5 rounded-lg hover:border-primary/40 transition-all"
+                  >
+                    + إضافة صورة
+                  </button>
+                )}
+              </div>
+
+              {/* Answer Image */}
+              <div className="flex flex-col gap-1">
+                <span className="text-xs font-black text-primary/50">صورة الإجابة</span>
+                {q.answer_image_url && !editAnsImg ? (
+                  <div className="flex items-center gap-2">
+                    <img
+                      src={q.answer_image_url}
+                      alt="إجابة"
+                      className="h-14 w-20 rounded-lg object-cover border border-blue-200"
+                      onError={e => e.target.style.display = "none"}
+                    />
+                    <button
+                      onClick={() => { setTmpAnsImg(q.answer_image_url || ""); setEditAnsImg(true); }}
+                      className="text-xs text-primary/50 hover:text-primary border border-primary/20 px-2 py-1 rounded-lg transition-all"
+                    >
+                      تغيير
+                    </button>
+                  </div>
+                ) : editAnsImg ? (
+                  <div className="flex gap-1.5 items-center">
+                    <input
+                      data-testid={`pending-q-ans-img-input-${q.id}`}
+                      value={tmpAnsImg}
+                      onChange={e => setTmpAnsImg(e.target.value)}
+                      placeholder="رابط صورة الإجابة..."
+                      className="border border-blue-200 rounded-lg px-2 py-1 text-xs outline-none w-40"
+                    />
+                    <button
+                      onClick={() => { saveField("answer_image_url", tmpAnsImg); setEditAnsImg(false); }}
+                      disabled={saving}
+                      className="text-xs bg-blue-600 text-white px-2 py-1 rounded-lg font-black disabled:opacity-50"
+                    >✓</button>
+                    <button onClick={() => setEditAnsImg(false)} className="text-xs text-primary/50 px-1">✕</button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => { setTmpAnsImg(""); setEditAnsImg(true); }}
+                    className="text-xs text-primary/40 border border-dashed border-blue-200 px-3 py-1.5 rounded-lg hover:border-blue-400 transition-all"
+                  >
+                    + إضافة صورة إجابة
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Right: actions */}
+          <div className="flex flex-col gap-2 shrink-0">
+            <button
+              data-testid={`approve-q-${q.id}`}
+              onClick={() => onApprove(q.id)}
+              className="bg-green-600 text-white px-4 py-2 rounded-xl font-black text-sm hover:bg-green-700 transition-all whitespace-nowrap"
+            >
+              ✓ نشر
+            </button>
+            <button
+              data-testid={`reject-q-${q.id}`}
+              onClick={() => onReject(q.id)}
+              className="bg-red-100 text-red-600 px-4 py-2 rounded-xl font-black text-sm hover:bg-red-200 transition-all whitespace-nowrap"
+            >
+              ✕ رفض
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AdminDashboard() {
   const navigate = useNavigate();
   const token = localStorage.getItem("admin_token");
@@ -85,6 +246,7 @@ export default function AdminDashboard() {
   const [pendingLoading, setPendingLoading]     = useState(false);
   const [pendingTotal, setPendingTotal]         = useState(0);
   const [importUploading, setImportUploading]   = useState(false);
+  const [importCustomPrompt, setImportCustomPrompt] = useState("");
   const importFileRef = useRef(null);
 
   useEffect(() => {
@@ -176,6 +338,7 @@ export default function AdminDashboard() {
     setImportUploading(true);
     const fd = new FormData();
     fd.append("file", file);
+    if (importCustomPrompt.trim()) fd.append("extra_prompt", importCustomPrompt.trim());
     try {
       const { data } = await axios.post(`${API}/admin/questions/import`, fd, {
         headers: { ...headers, "Content-Type": "multipart/form-data" },
@@ -1508,14 +1671,33 @@ export default function AdminDashboard() {
               <span className="text-xl">📥</span>
               <div>
                 <div className="font-black text-blue-800">استيراد أسئلة من ملف</div>
-                <div className="text-xs text-blue-600">Excel (.xlsx) · CSV (.csv) · JSON (.json)</div>
+                <div className="text-xs text-blue-600">Excel · CSV · JSON · PDF · Word (.docx) · TXT</div>
               </div>
             </div>
-            <div className="text-xs text-blue-700 mb-4 bg-blue-100 rounded-xl p-3">
+            <div className="text-xs text-blue-700 mb-3 bg-blue-100 rounded-xl p-3">
               <div className="font-bold mb-1">تنسيق الملف المطلوب:</div>
               <div>أعمدة مطلوبة: <strong>text</strong> (نص السؤال) · <strong>answer</strong> (الإجابة)</div>
               <div>أعمدة اختيارية: <strong>difficulty</strong> (300/600/900) · <strong>category_id</strong> · <strong>image_query</strong></div>
+              <div className="mt-1 text-blue-500">للملفات الأخرى (PDF/Word/TXT): سيستخدم الذكاء الاصطناعي لاستخراج الأسئلة تلقائياً</div>
             </div>
+
+            {/* Custom AI instructions */}
+            <div className="mb-4">
+              <label className="block text-sm font-black text-blue-800 mb-1.5">
+                تعليمات مخصصة للذكاء الاصطناعي <span className="text-blue-400 font-normal">(اختياري — لملفات PDF/Word/TXT)</span>
+              </label>
+              <textarea
+                data-testid="import-custom-prompt"
+                value={importCustomPrompt}
+                onChange={e => setImportCustomPrompt(e.target.value)}
+                placeholder="مثال: ركّز على الأسئلة المتعلقة بالشباب السعودي · استخرج أسئلة الصعوبة المتوسطة والصعبة فقط · صِغ الأسئلة بأسلوب ترفيهي ..."
+                rows={3}
+                className="w-full border-2 border-blue-300 focus:border-blue-500 rounded-xl px-3 py-2.5 text-sm outline-none resize-none bg-white"
+                style={{ fontFamily: "Cairo, sans-serif" }}
+              />
+              <p className="text-xs text-blue-500 mt-1">هذه التعليمات ترشد الذكاء الاصطناعي عند استخراج الأسئلة من الملفات الكبيرة.</p>
+            </div>
+
             <input
               ref={importFileRef}
               type="file"
@@ -1529,7 +1711,7 @@ export default function AdminDashboard() {
               disabled={importUploading}
               className="bg-blue-600 text-white px-6 py-2.5 rounded-xl font-black text-sm hover:bg-blue-700 transition-all disabled:opacity-50 flex items-center gap-2"
             >
-              {importUploading ? (<><span className="animate-spin">⏳</span> جاري الرفع...</>) : (<><span>📂</span> اختر ملف</>)}
+              {importUploading ? (<><span className="animate-spin">⏳</span> جاري الرفع والمعالجة...</>) : (<><span>📂</span> اختر ملف وابدأ الاستيراد</>)}
             </button>
           </div>
 
@@ -1547,57 +1729,18 @@ export default function AdminDashboard() {
             </div>
           ) : (
             <div className="space-y-3">
-              {pendingQuestions.map((q, i) => {
-                const diffColor = q.difficulty === 300 ? "green" : q.difficulty === 600 ? "amber" : "red";
-                const diffLabel = q.difficulty === 300 ? "سهل" : q.difficulty === 600 ? "متوسط" : "صعب";
-                const cat = categories.find(c => c.id === q.category_id);
-                return (
-                  <div
-                    key={q.id}
-                    data-testid={`pending-q-${i}`}
-                    className={`bg-white border rounded-2xl overflow-hidden flex gap-0 border-${diffColor}-200`}
-                  >
-                    <div className={`w-1.5 shrink-0 bg-${diffColor}-400`} />
-                    <div className="flex-1 p-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-2 flex-wrap">
-                            <span className={`text-[11px] font-black px-2 py-0.5 rounded-full bg-${diffColor}-100 text-${diffColor}-800`}>
-                              {diffLabel} · {q.difficulty}
-                            </span>
-                            {cat && (
-                              <span className="text-[11px] px-2 py-0.5 rounded-full bg-primary/10 text-primary/60 font-bold">
-                                {cat.icon} {cat.name}
-                              </span>
-                            )}
-                          </div>
-                          <div className="font-bold text-primary mb-1">{q.text}</div>
-                          <div className="text-sm text-primary/60">الإجابة: <span className="font-black text-primary">{q.answer}</span></div>
-                          {q.image_url && (
-                            <img src={q.image_url} alt="" className="mt-2 h-16 rounded-lg object-cover" onError={e => e.target.style.display = "none"} />
-                          )}
-                        </div>
-                        <div className="flex flex-col gap-2 shrink-0">
-                          <button
-                            data-testid={`approve-q-${q.id}`}
-                            onClick={() => handleApproveQuestion(q.id)}
-                            className="bg-green-600 text-white px-4 py-2 rounded-xl font-black text-sm hover:bg-green-700 transition-all whitespace-nowrap"
-                          >
-                            ✓ نشر
-                          </button>
-                          <button
-                            data-testid={`reject-q-${q.id}`}
-                            onClick={() => handleRejectQuestion(q.id)}
-                            className="bg-red-100 text-red-600 px-4 py-2 rounded-xl font-black text-sm hover:bg-red-200 transition-all whitespace-nowrap"
-                          >
-                            ✕ رفض
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+              {pendingQuestions.map((q, i) => (
+                <PendingQuestionCard
+                  key={q.id}
+                  q={q}
+                  i={i}
+                  categories={categories}
+                  headers={headers}
+                  onApprove={handleApproveQuestion}
+                  onReject={handleRejectQuestion}
+                  onUpdate={(id, fields) => setPendingQuestions(prev => prev.map(pq => pq.id === id ? { ...pq, ...fields } : pq))}
+                />
+              ))}
             </div>
           )}
         </div>

@@ -219,6 +219,95 @@ function CategoryCard({ cat, session, isTileUsed, clickingTile, onTileClick, dar
   );
 }
 
+/* ════════════════════════ QUICK HOST BAR ════════════════════════ */
+function QuickHostBar({ session, currentTurn, switchTurn, adjustScoreDelta, dark }) {
+  const [busy, setBusy] = useState(false);
+  const P = dark ? DARK : LIGHT;
+
+  const adj = async (team, val) => {
+    if (busy) return;
+    setBusy(true);
+    await adjustScoreDelta(team, val);
+    const tname = team === 1 ? session?.team1_name : session?.team2_name;
+    toast.success(`+${val} → ${tname}`, { duration: 1200 });
+    setBusy(false);
+  };
+
+  return (
+    <div
+      className="shrink-0 flex items-center justify-between px-3 py-1.5 gap-2"
+      style={{ background: dark ? "rgba(8,16,6,0.92)" : "rgba(44,58,26,0.88)", borderBottom: `1px solid ${dark ? "rgba(120,170,90,0.15)" : "rgba(0,0,0,0.12)"}` }}
+    >
+      {/* Team 1 quick +points */}
+      <div className="flex items-center gap-1">
+        <span className="text-red-400 font-black text-xs mr-1 hidden sm:inline" style={{ maxWidth: "80px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          🔴 {session?.team1_name}
+        </span>
+        {[300, 600, 900].map(v => (
+          <button
+            key={`q1-${v}`}
+            data-testid={`quick-t1-plus-${v}`}
+            onClick={() => adj(1, v)}
+            disabled={busy}
+            className="rounded-lg font-black transition-all hover:scale-110 active:scale-90 disabled:opacity-40"
+            style={{
+              background: "rgba(239,68,68,0.18)",
+              border: "1px solid rgba(239,68,68,0.45)",
+              color: "#fca5a5",
+              fontSize: "clamp(0.6rem,1.1vw,0.75rem)",
+              padding: "clamp(3px,0.5vh,6px) clamp(5px,0.9vw,10px)",
+            }}
+          >
+            +{v}
+          </button>
+        ))}
+      </div>
+
+      {/* Center: switch turn */}
+      <button
+        data-testid="quick-switch-turn"
+        onClick={() => { switchTurn(); toast.success("تبديل الدور ⇄", { duration: 900 }); }}
+        className="rounded-full font-black transition-all hover:scale-105 active:scale-95"
+        style={{
+          background: currentTurn === 1 ? "rgba(239,68,68,0.25)" : "rgba(59,130,246,0.25)",
+          border: `1.5px solid ${currentTurn === 1 ? "rgba(239,68,68,0.7)" : "rgba(59,130,246,0.7)"}`,
+          color: "#F1E194",
+          fontSize: "clamp(0.65rem,1.2vw,0.85rem)",
+          padding: "clamp(4px,0.6vh,8px) clamp(10px,1.5vw,18px)",
+          whiteSpace: "nowrap",
+        }}
+      >
+        ⇄ تبديل الدور
+      </button>
+
+      {/* Team 2 quick +points */}
+      <div className="flex items-center gap-1">
+        {[300, 600, 900].map(v => (
+          <button
+            key={`q2-${v}`}
+            data-testid={`quick-t2-plus-${v}`}
+            onClick={() => adj(2, v)}
+            disabled={busy}
+            className="rounded-lg font-black transition-all hover:scale-110 active:scale-90 disabled:opacity-40"
+            style={{
+              background: "rgba(59,130,246,0.18)",
+              border: "1px solid rgba(59,130,246,0.45)",
+              color: "#93c5fd",
+              fontSize: "clamp(0.6rem,1.1vw,0.75rem)",
+              padding: "clamp(3px,0.5vh,6px) clamp(5px,0.9vw,10px)",
+            }}
+          >
+            +{v}
+          </button>
+        ))}
+        <span className="text-blue-400 font-black text-xs ml-1 hidden sm:inline" style={{ maxWidth: "80px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {session?.team2_name} 🔵
+        </span>
+      </div>
+    </div>
+  );
+}
+
 /* ════════════════════════ GAME MASTER PANEL ════════════════════════ */
 function GameMasterPanel({ session, teamScores, currentTurn, selectedQuestions,
   categories, adjustScoreDelta, setExactScore, setTurn, switchTurn, restoreTile, dark }) {
@@ -278,7 +367,7 @@ function GameMasterPanel({ session, teamScores, currentTurn, selectedQuestions,
 
   return (
     <>
-      {/* ── Game Master Toggle Button (redesigned) ── */}
+      {/* ── Game Master Toggle Button ── */}
       <button
         data-testid="gmp-toggle-btn"
         onClick={() => setOpen(o => !o)}
@@ -289,17 +378,27 @@ function GameMasterPanel({ session, teamScores, currentTurn, selectedQuestions,
           right: "clamp(16px,2vw,28px)",
           background: open
             ? "linear-gradient(135deg,#5B0E14,#8B1520)"
-            : "linear-gradient(135deg,rgba(91,14,20,0.95),rgba(139,21,32,0.95))",
-          border: "2px solid rgba(241,225,148,0.45)",
+            : "linear-gradient(135deg,#7A1020,#A8192A)",
+          border: "2.5px solid rgba(241,225,148,0.6)",
           color: "#F1E194",
-          padding: "clamp(10px,1.5vh,16px) clamp(16px,2.2vw,28px)",
-          boxShadow: "0 6px 32px rgba(91,14,20,0.65), 0 2px 8px rgba(0,0,0,0.4)",
+          padding: "clamp(12px,1.8vh,20px) clamp(18px,2.5vw,32px)",
+          boxShadow: open
+            ? "0 6px 32px rgba(91,14,20,0.65), 0 2px 8px rgba(0,0,0,0.4)"
+            : "0 0 0 4px rgba(241,225,148,0.15), 0 8px 32px rgba(91,14,20,0.8), 0 2px 8px rgba(0,0,0,0.5)",
           backdropFilter: "blur(8px)",
-          minWidth: "clamp(140px,14vw,180px)",
+          minWidth: "clamp(150px,15vw,200px)",
+          animation: open ? "none" : "gmpPulse 2s ease-in-out infinite",
         }}
       >
-        <span style={{ fontSize: "clamp(1.1rem,1.8vw,1.4rem)" }}>⚙</span>
-        <span style={{ fontSize: "clamp(0.8rem,1.3vw,1rem)" }}>{open ? "إغلاق" : "لوحة المضيف"}</span>
+        <span style={{ fontSize: "clamp(1.2rem,2vw,1.6rem)" }}>⚙</span>
+        <div className="flex flex-col items-start leading-tight">
+          <span style={{ fontSize: "clamp(0.85rem,1.4vw,1.05rem)", fontWeight: 900 }}>
+            {open ? "إغلاق اللوحة" : "لوحة المضيف"}
+          </span>
+          {!open && (
+            <span style={{ fontSize: "clamp(0.6rem,0.9vw,0.72rem)", opacity: 0.7, fontWeight: 600 }}>نقاط · الدور · استعادة</span>
+          )}
+        </div>
       </button>
 
       {/* ── Backdrop ── */}
@@ -830,7 +929,16 @@ export default function GameBoardPage() {
         </div>
       </div>
 
-      {/* ── Game Board: responsive grid — 3 cols × 2 rows on small, 6 cols × 1 row on wide ── */}
+      {/* ── Quick Host Bar (always visible) ── */}
+      <QuickHostBar
+        session={session}
+        currentTurn={currentTurn}
+        switchTurn={switchTurn}
+        adjustScoreDelta={adjustScoreDelta}
+        dark={darkMode}
+      />
+
+      {/* ── Game Board: responsive grid ── */}
       <div
         className="flex-1 p-2 md:p-3"
         style={{

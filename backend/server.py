@@ -944,6 +944,19 @@ async def get_pending_questions(
     return {"items": items, "total": total}
 
 
+@api_router.patch("/admin/questions/pending/{q_id}")
+async def patch_pending_question(q_id: str, body: dict, admin: dict = Depends(get_admin)):
+    """Update specific fields of a pending question (e.g., image_url, answer_image_url)."""
+    allowed = {"text", "answer", "image_url", "answer_image_url", "image_query", "difficulty", "category_id"}
+    updates = {k: v for k, v in body.items() if k in allowed}
+    if not updates:
+        raise HTTPException(400, "لا توجد حقول صالحة للتحديث")
+    result = await db.pending_questions.update_one({"id": q_id}, {"$set": updates})
+    if result.matched_count == 0:
+        raise HTTPException(404, "السؤال غير موجود")
+    return {"message": "تم التحديث"}
+
+
 @api_router.post("/admin/questions/{q_id}/approve")
 async def approve_pending_question(q_id: str, body: dict = {}, admin: dict = Depends(get_admin)):
     """Approve a pending question — move it to the live questions collection."""
