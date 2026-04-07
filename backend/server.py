@@ -589,7 +589,7 @@ async def autosave_question(q_id: str, body: dict, admin: dict = Depends(get_adm
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# QUESTION IMPORT  (Excel / CSV / JSON)
+# QUESTION IMPORT  (All file types + AI extraction)
 # ══════════════════════════════════════════════════════════════════════════════
 
 DIFF_MAP_IMPORT = {300: 300, 600: 600, 900: 900, "300": 300, "600": 600, "900": 900,
@@ -603,7 +603,6 @@ def _parse_difficulty(val) -> int:
 
 def _parse_questions_df(df: "pd.DataFrame", category_id: str) -> list:
     """Convert a DataFrame to a list of question dicts."""
-    # Normalize column names
     col_map = {}
     for c in df.columns:
         cl = str(c).strip().lower()
@@ -648,22 +647,149 @@ def _parse_questions_df(df: "pd.DataFrame", category_id: str) -> list:
     return questions
 
 
+AI_EXTRACT_PROMPT = """أنت مساعد ذكي لاستخراج أسئلة من المحتوى العربي.
+
+استخرج جميع الأسئلة والإجابات من النص التالي.
+- الأسئلة والإجابات باللغة العربية
+- إذا لم تجد مستوى الصعوبة، افترض 300 (سهل)
+- image_query: كلمة بحث إنجليزية مناسبة للصورة
+
+أعد JSON array فقط بالشكل التالي:
+[{"text":"نص السؤال؟","answer":"الإجابة","difficulty":300,"image_query":"search term"}]
+
+النص:
+"""
+
+
+async def _extract_via_ai(text_content: str, category_id: str) -> list:
+    """Use Gemini to extract Q&A from plain text."""
+    prompt = AI_EXTRACT_PROMPT + text_content[:8000]
+    raw = await _gemini_generate(prompt)
+    m = re.search(r'\[.*?\]', raw, re.DOTALL)
+    if not m:
+        return []
+    try:
+        items = json.loads(m.group())
+    except json.JSONDecodeError:
+        return []
+
+    ts = datetime.now(timezone.utc).isoformat()
+    questions = []
+    for r in items:
+        text = str(r.get("text") or "").strip()
+        ans  = str(r.get("answer") or "").strip()
+        if not text or not ans:
+            continue
+        questions.append({
+            "id":               str(uuid.uuid4()),
+            "category_id":      str(r.get("category_id") or category_id).strip() or category_id,
+            "difficulty":       _parse_difficulty(r.get("difficulty", 300)),
+            "text":             text,
+            "answer":           ans,
+            "image_url":        str(r.get("image_url") or "").strip(),
+            "answer_image_url": "",
+            "image_query":      str(r.get("image_query") or "").strip(),
+            "question_type":    "text",
+            "is_experimental":  False,
+            "status":           "pending",
+            "created_at":       ts,
+        })
+    return questions
+
+
+async def _extract_pdf_text(content: bytes) -> str:
+    """Extract text from a PDF using pypdf."""
+    try:
+        import pypdf
+        reader = pypdf.PdfReader(io.BytesIO(content))
+        pages  = [p.extract_text() or "" for p in reader.pages]
+        return "\n".join(pages)
+    except Exception as e:
+        logger.warning(f"PDF extraction error: {e}")
+        return ""
+
+
+async def _extract_docx_text(content: bytes) -> str:
+    """Extract text from a Word .docx file."""
+    try:
+        from docx import Document
+        doc = Document(io.BytesIO(content))
+        return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+    except Exception as e:
+        logger.warning(f"DOCX extraction error: {e}")
+        return ""
+
+
+async def _extract_image_questions(content: bytes, mime: str, category_id: str) -> list:
+    """Use Gemini Vision to extract questions from an image."""
+    import base64
+    img_b64 = base64.b64encode(content).decode()
+    GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
+    if not GEMINI_KEY:
+        return []
+    payload = {
+        "contents": [{
+            "parts": [
+                {"text": "استخرج الأسئلة والإجابات من هذه الصورة. أعد JSON array فقط: [{\"text\":\"السؤال؟\",\"answer\":\"الإجابة\",\"difficulty\":300,\"image_query\":\"search term\"}]"},
+                {"inline_data": {"mime_type": mime, "data": img_b64}},
+            ]
+        }]
+    }
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}",
+            json=payload,
+        )
+    if resp.status_code != 200:
+        return []
+    raw = resp.json().get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+    m = re.search(r'\[.*?\]', raw, re.DOTALL)
+    if not m:
+        return []
+    try:
+        items = json.loads(m.group())
+    except json.JSONDecodeError:
+        return []
+
+    ts = datetime.now(timezone.utc).isoformat()
+    questions = []
+    for r in items:
+        text = str(r.get("text") or "").strip()
+        ans  = str(r.get("answer") or "").strip()
+        if text and ans:
+            questions.append({
+                "id":               str(uuid.uuid4()),
+                "category_id":      category_id,
+                "difficulty":       _parse_difficulty(r.get("difficulty", 300)),
+                "text":             text,
+                "answer":           ans,
+                "image_url":        "",
+                "answer_image_url": "",
+                "image_query":      str(r.get("image_query") or "").strip(),
+                "question_type":    "text",
+                "is_experimental":  False,
+                "status":           "pending",
+                "created_at":       ts,
+            })
+    return questions
+
+
 @api_router.post("/admin/questions/import")
 async def import_questions(
     file: UploadFile = File(...),
     category_id: str = "",
     admin: dict = Depends(get_admin),
 ):
-    """Import questions from Excel / CSV / JSON file into a staging area."""
-    filename = (file.filename or "").lower()
+    """Import questions from any file type (Excel/CSV/JSON/PDF/Word/Image/TXT)."""
+    filename = (file.filename or "untitled").lower()
     content  = await file.read()
+    questions = []
 
     try:
         if filename.endswith(".json"):
             raw = json.loads(content.decode("utf-8"))
             raw_list = raw if isinstance(raw, list) else raw.get("questions", [])
             ts = datetime.now(timezone.utc).isoformat()
-            questions = []
             for r in raw_list:
                 text = str(r.get("text") or r.get("question") or "").strip()
                 ans  = str(r.get("answer") or "").strip()
@@ -688,15 +814,39 @@ async def import_questions(
         elif filename.endswith((".xlsx", ".xls")):
             df = pd.read_excel(io.BytesIO(content))
             questions = _parse_questions_df(df, category_id)
+        elif filename.endswith(".txt"):
+            text_content = content.decode("utf-8", errors="replace")
+            questions = await _extract_via_ai(text_content, category_id)
+        elif filename.endswith(".pdf"):
+            pdf_text = await _extract_pdf_text(content)
+            if not pdf_text.strip():
+                raise HTTPException(422, "لم يُمكن استخراج نص من الـ PDF. تأكد أنه PDF نصي (ليس صوراً)")
+            questions = await _extract_via_ai(pdf_text, category_id)
+        elif filename.endswith((".docx", ".doc")):
+            doc_text = await _extract_docx_text(content)
+            if not doc_text.strip():
+                raise HTTPException(422, "لم يُمكن استخراج نص من ملف Word")
+            questions = await _extract_via_ai(doc_text, category_id)
+        elif filename.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")):
+            ext_to_mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                           ".webp": "image/webp", ".gif": "image/gif"}
+            ext = "." + filename.rsplit(".", 1)[-1]
+            mime = ext_to_mime.get(ext, "image/jpeg")
+            questions = await _extract_image_questions(content, mime, category_id)
         else:
-            raise HTTPException(400, "صيغة الملف غير مدعومة — استخدم Excel أو CSV أو JSON")
+            # Try AI extraction as generic text
+            try:
+                text_content = content.decode("utf-8", errors="replace")
+                questions = await _extract_via_ai(text_content, category_id)
+            except Exception:
+                raise HTTPException(400, "صيغة الملف غير مدعومة")
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(422, f"خطأ في قراءة الملف: {str(e)[:200]}")
 
     if not questions:
-        raise HTTPException(400, "لم يتم العثور على أسئلة صالحة في الملف")
+        raise HTTPException(400, "لم يتم العثور على أسئلة صالحة في الملف — تأكد من التنسيق أو جرب ملفاً آخر")
 
     await db.pending_questions.insert_many(questions)
     await log_admin_action(admin, "رفع ملف أسئلة", "أسئلة معلقة", filename,
@@ -735,6 +885,23 @@ async def approve_pending_question(q_id: str, body: dict = {}, admin: dict = Dep
     for k, v in (body or {}).items():
         if k in allowed:
             q[k] = v
+
+    # Auto-fetch Unsplash image if image_query exists but image_url is empty
+    if q.get("image_query") and not q.get("image_url"):
+        try:
+            unsplash_key = os.environ.get("UNSPLASH_API_KEY", "")
+            if unsplash_key:
+                async with httpx.AsyncClient(timeout=10) as uc:
+                    r = await uc.get(
+                        "https://api.unsplash.com/photos/random",
+                        params={"query": q["image_query"], "orientation": "landscape"},
+                        headers={"Authorization": f"Client-ID {unsplash_key}"},
+                    )
+                    if r.status_code == 200:
+                        img_data = r.json()
+                        q["image_url"] = img_data.get("urls", {}).get("regular", "")
+        except Exception as ue:
+            logger.warning(f"Unsplash fetch on approve failed: {ue}")
 
     q.pop("status", None)
     q["approved_by"] = admin.get("admin_name", "admin")
@@ -775,15 +942,63 @@ async def update_pending_question(q_id: str, body: dict, admin: dict = Depends(g
     return res
 
 
+@api_router.post("/admin/questions/bulk-fetch-images")
+async def bulk_fetch_images(body: dict = {}, admin: dict = Depends(get_admin)):
+    """Bulk-fetch Unsplash images for questions that have image_query but empty image_url."""
+    unsplash_key = os.environ.get("UNSPLASH_API_KEY", "")
+    if not unsplash_key:
+        raise HTTPException(503, "Unsplash API key غير مضبوط")
+
+    limit = min(int(body.get("limit", 50)), 200)
+    category_id = body.get("category_id")
+    q_filter = {"image_query": {"$ne": ""}, "$or": [{"image_url": ""}, {"image_url": None}], "deleted_at": None}
+    if category_id:
+        q_filter["category_id"] = category_id
+
+    questions = await db.questions.find(q_filter, {"_id": 0, "id": 1, "image_query": 1}).limit(limit).to_list(limit)
+    updated = 0
+    async with httpx.AsyncClient(timeout=12) as client:
+        for q in questions:
+            try:
+                r = await client.get(
+                    "https://api.unsplash.com/photos/random",
+                    params={"query": q["image_query"], "orientation": "landscape"},
+                    headers={"Authorization": f"Client-ID {unsplash_key}"},
+                )
+                if r.status_code == 200:
+                    img_url = r.json().get("urls", {}).get("regular", "")
+                    if img_url:
+                        await db.questions.update_one({"id": q["id"]}, {"$set": {"image_url": img_url}})
+                        updated += 1
+                await asyncio.sleep(0.3)  # Rate limit
+            except Exception:
+                continue
+
+    return {"message": f"تم تحديث صور {updated} سؤال من أصل {len(questions)}", "updated": updated, "total": len(questions)}
+
 @api_router.post("/admin/questions/approve-all")
 async def approve_all_pending(admin: dict = Depends(get_admin)):
-    """Approve ALL pending questions in one click."""
+    """Approve ALL pending questions in one click (auto-fetch Unsplash for missing images)."""
     pending = await db.pending_questions.find({}, {"_id": 0}).to_list(10000)
     if not pending:
         return {"message": "لا توجد أسئلة معلقة", "count": 0}
     ts     = datetime.now(timezone.utc).isoformat()
+    unsplash_key = os.environ.get("UNSPLASH_API_KEY", "")
     to_ins = []
     for q in pending:
+        # Auto-fetch Unsplash for questions that need an image
+        if unsplash_key and q.get("image_query") and not q.get("image_url"):
+            try:
+                async with httpx.AsyncClient(timeout=8) as uc:
+                    r = await uc.get(
+                        "https://api.unsplash.com/photos/random",
+                        params={"query": q["image_query"], "orientation": "landscape"},
+                        headers={"Authorization": f"Client-ID {unsplash_key}"},
+                    )
+                    if r.status_code == 200:
+                        q["image_url"] = r.json().get("urls", {}).get("regular", "")
+            except Exception:
+                pass
         q.pop("status", None)
         q["approved_by"] = admin.get("admin_name", "admin")
         q["approved_at"] = ts

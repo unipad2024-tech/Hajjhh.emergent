@@ -5,36 +5,49 @@ Docs: https://developer.paylink.sa
 import httpx
 import logging
 import os
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 PAYLINK_BASE_URL = "https://restapi.paylink.sa"
 
-PAYLINK_API_ID   = os.environ.get("PAYMENT_API_ID", "")
-PAYLINK_SECRET   = os.environ.get("PAYMENT_API_KEY", "")
+
+def _credentials() -> tuple[str, str]:
+    """Read credentials lazily (after load_dotenv has been called in server.py)."""
+    api_id = os.environ.get("PAYMENT_API_ID", "")
+    secret = os.environ.get("PAYMENT_API_KEY", "")
+    return api_id, secret
 
 
 async def _get_auth_token() -> str:
     """
-    Authenticate with Paylink and return a Bearer token.
+    Authenticate with Paylink and return a Bearer token (id_token).
     POST /api/auth  →  { id_token }
     """
-    async with httpx.AsyncClient(timeout=20) as client:
+    api_id, secret = _credentials()
+    if not api_id or not secret:
+        raise ValueError("PAYMENT_API_ID / PAYMENT_API_KEY not configured")
+
+    async with httpx.AsyncClient(timeout=30, verify=True) as client:
         resp = await client.post(
             f"{PAYLINK_BASE_URL}/api/auth",
             json={
-                "apiId": PAYLINK_API_ID,
-                "secretKey": PAYLINK_SECRET,
+                "apiId":        api_id,
+                "secretKey":    secret,
                 "persistToken": False,
             },
-            headers={"Accept": "application/json", "Content-Type": "application/json"},
+            headers={
+                "Accept":       "application/json",
+                "Content-Type": "application/json",
+            },
         )
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            body = resp.text[:300]
+            raise ValueError(f"Paylink auth failed (HTTP {resp.status_code}): {body}")
+
         data = resp.json()
         token = data.get("id_token", "")
         if not token:
-            raise ValueError(f"Paylink auth failed: {data}")
+            raise ValueError(f"Paylink auth: no id_token in response: {data}")
         return token
 
 
@@ -50,14 +63,14 @@ async def create_invoice(
     note: str = "",
 ) -> dict:
     """
-    Create a Paylink invoice and return the response.
-    Returns dict with keys: url, transactionNo, qrUrl, mobileUrl, checkUrl, success
+    Create a Paylink invoice and return the response dict.
+    Keys: url (redirect), transactionNo, success, ...
     """
     token = await _get_auth_token()
     headers = {
         "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
-        "Content-Type": "application/json",
+        "Accept":        "application/json",
+        "Content-Type":  "application/json",
     }
     payload = {
         "orderNumber":  order_number,
@@ -82,7 +95,7 @@ async def create_invoice(
     if client_email:
         payload["clientEmail"] = client_email
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=30, verify=True) as client:
         resp = await client.post(
             f"{PAYLINK_BASE_URL}/api/addInvoice",
             json=payload,
@@ -90,8 +103,8 @@ async def create_invoice(
         )
         data = resp.json()
         if resp.status_code not in (200, 201) or not data.get("success"):
-            logger.error(f"Paylink addInvoice error: {data}")
-            raise ValueError(data.get("detail") or str(data))
+            logger.error(f"Paylink addInvoice error ({resp.status_code}): {data}")
+            raise ValueError(data.get("detail") or data.get("message") or str(data)[:200])
         return data
 
 
@@ -103,13 +116,14 @@ async def get_invoice_status(transaction_no: str) -> dict:
     token = await _get_auth_token()
     headers = {
         "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
-        "Content-Type": "application/json",
+        "Accept":        "application/json",
+        "Content-Type":  "application/json",
     }
-    async with httpx.AsyncClient(timeout=20) as client:
+    async with httpx.AsyncClient(timeout=30, verify=True) as client:
         resp = await client.get(
             f"{PAYLINK_BASE_URL}/api/getInvoice/{transaction_no}",
             headers=headers,
         )
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            raise ValueError(f"Paylink getInvoice HTTP {resp.status_code}: {resp.text[:200]}")
         return resp.json()

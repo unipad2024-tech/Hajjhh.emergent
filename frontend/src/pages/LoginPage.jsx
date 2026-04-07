@@ -53,16 +53,17 @@ export default function LoginPage() {
             <p className="text-secondary/60 text-sm">سجّل دخولك وانطلق</p>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4" autoComplete="off">
             <div>
               <label className="text-secondary/70 text-xs font-bold block mb-1">البريد الإلكتروني</label>
               <input
                 data-testid="login-email-input"
                 type="email"
                 value={form.email}
-                onChange={(e) => setForm({ ...form, email: e.target.value })}
+                onChange={(e) => setForm(prev => ({ ...prev, email: e.target.value }))}
                 placeholder="example@email.com"
-                className="w-full bg-black/30 border-2 border-secondary/20 focus:border-secondary text-secondary placeholder:text-secondary/25 px-4 py-3 rounded-xl outline-none transition-all text-right"
+                autoComplete="email"
+                className="w-full bg-black/30 border-2 border-secondary/20 focus:border-secondary text-secondary placeholder:text-secondary/25 px-4 py-3 rounded-xl outline-none transition-colors text-right"
                 dir="ltr"
               />
             </div>
@@ -74,13 +75,15 @@ export default function LoginPage() {
                   data-testid="login-password-input"
                   type={showPw ? "text" : "password"}
                   value={form.password}
-                  onChange={(e) => setForm({ ...form, password: e.target.value })}
+                  onChange={(e) => setForm(prev => ({ ...prev, password: e.target.value }))}
                   placeholder="••••••••"
-                  className="w-full bg-black/30 border-2 border-secondary/20 focus:border-secondary text-secondary placeholder:text-secondary/25 px-4 py-3 pr-12 rounded-xl outline-none transition-all text-right"
+                  autoComplete="current-password"
+                  className="w-full bg-black/30 border-2 border-secondary/20 focus:border-secondary text-secondary placeholder:text-secondary/25 px-4 py-3 pr-12 rounded-xl outline-none transition-colors text-right"
                 />
                 <button
                   type="button"
                   data-testid="login-pw-toggle"
+                  tabIndex={-1}
                   onClick={() => setShowPw(v => !v)}
                   className="absolute left-3 top-1/2 -translate-y-1/2 text-secondary/40 hover:text-secondary/80 transition-colors"
                 >

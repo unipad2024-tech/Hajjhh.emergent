@@ -219,6 +219,19 @@ export default function AdminDashboard() {
     } catch { toast.error("خطأ في الموافقة الجماعية"); }
   };
 
+  const handleBulkFetchImages = async () => {
+    const limit = parseInt(window.prompt("كم سؤال تريد تحديث صوره؟ (الحد الأقصى 200)", "50") || "50");
+    if (!limit || isNaN(limit)) return;
+    try {
+      toast.info("جاري جلب الصور... قد يستغرق بعض الوقت");
+      const { data } = await axios.post(`${API}/admin/questions/bulk-fetch-images`,
+        { limit, category_id: selectedCat || undefined }, { headers });
+      toast.success(data.message);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "خطأ في جلب الصور");
+    }
+  };
+
   const saveSettings = async () => {
     try {
       const body = {
@@ -864,7 +877,7 @@ export default function AdminDashboard() {
                 <input
                   ref={importFileRef}
                   type="file"
-                  accept=".xlsx,.xls,.csv,.json"
+                  accept=".xlsx,.xls,.csv,.json,.pdf,.docx,.doc,.txt,.png,.jpg,.jpeg,.webp"
                   className="hidden"
                   onChange={(e) => handleImportFile(e.target.files?.[0])}
                 />
@@ -873,9 +886,17 @@ export default function AdminDashboard() {
                   onClick={() => importFileRef.current?.click()}
                   disabled={importUploading}
                   className="text-sm text-blue-600 hover:text-blue-700 border border-blue-200 hover:border-blue-400 px-3 py-1.5 rounded-lg transition-all font-bold disabled:opacity-50"
-                  title="رفع ملف أسئلة (Excel/CSV/JSON)"
+                  title="رفع ملف أسئلة (Excel/CSV/JSON/PDF/Word/صورة)"
                 >
                   {importUploading ? "⏳ جاري الرفع..." : "📥 رفع ملف"}
+                </button>
+                <button
+                  data-testid="bulk-fetch-images-btn"
+                  onClick={handleBulkFetchImages}
+                  className="text-sm text-purple-600 hover:text-purple-700 border border-purple-200 hover:border-purple-400 px-3 py-1.5 rounded-lg transition-all font-bold"
+                  title="جلب صور Unsplash لجميع الأسئلة التي لديها image_query بدون صورة"
+                >
+                  🖼️ جلب صور
                 </button>
                 <button
                   data-testid="add-question-btn"
@@ -1498,7 +1519,7 @@ export default function AdminDashboard() {
             <input
               ref={importFileRef}
               type="file"
-              accept=".xlsx,.xls,.csv,.json"
+              accept=".xlsx,.xls,.csv,.json,.pdf,.docx,.doc,.txt,.png,.jpg,.jpeg,.webp"
               className="hidden"
               onChange={(e) => handleImportFile(e.target.files?.[0])}
             />
@@ -2080,7 +2101,7 @@ export default function AdminDashboard() {
                   <select
                     data-testid="question-category-select"
                     value={form.category_id}
-                    onChange={(e) => setForm({ ...form, category_id: e.target.value })}
+                    onChange={(e) => setForm(prev => ({ ...prev, category_id: e.target.value }))}
                     className="w-full border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none bg-white"
                   >
                     <option value="">اختر فئة</option>
@@ -2092,7 +2113,7 @@ export default function AdminDashboard() {
                   <select
                     data-testid="question-difficulty-select"
                     value={form.difficulty}
-                    onChange={(e) => setForm({ ...form, difficulty: parseInt(e.target.value) })}
+                    onChange={(e) => setForm(prev => ({ ...prev, difficulty: parseInt(e.target.value) }))}
                     className="w-full border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none bg-white"
                   >
                     <option value={300}>300 - سهل</option>
@@ -2107,7 +2128,7 @@ export default function AdminDashboard() {
                 <select
                   data-testid="question-type-select"
                   value={form.question_type}
-                  onChange={(e) => setForm({ ...form, question_type: e.target.value })}
+                  onChange={(e) => setForm(prev => ({ ...prev, question_type: e.target.value }))}
                   className="w-full border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none bg-white"
                 >
                   <option value="text">سؤال عادي</option>
@@ -2125,8 +2146,9 @@ export default function AdminDashboard() {
                   data-testid="question-text-input"
                   value={form.text}
                   onChange={(e) => {
-                    setForm({ ...form, text: e.target.value });
-                    if (editingQuestion?.id) triggerAutoSave(editingQuestion.id, { text: e.target.value });
+                    const val = e.target.value;
+                    setForm(prev => ({ ...prev, text: val }));
+                    if (editingQuestion?.id) triggerAutoSave(editingQuestion.id, { text: val });
                   }}
                   placeholder={form.question_type === "secret_word" ? "وصّف هذي الكلمة لفريقك!" : "أدخل نص السؤال"}
                   rows={3}
@@ -2142,8 +2164,9 @@ export default function AdminDashboard() {
                   data-testid="question-answer-input"
                   value={form.answer}
                   onChange={(e) => {
-                    setForm({ ...form, answer: e.target.value });
-                    if (editingQuestion?.id) triggerAutoSave(editingQuestion.id, { answer: e.target.value });
+                    const val = e.target.value;
+                    setForm(prev => ({ ...prev, answer: val }));
+                    if (editingQuestion?.id) triggerAutoSave(editingQuestion.id, { answer: val });
                   }}
                   placeholder={form.question_type === "secret_word" ? "الكلمة السرية" : "الإجابة الصحيحة"}
                   className="w-full border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none"
@@ -2161,13 +2184,13 @@ export default function AdminDashboard() {
                       type="file"
                       accept="image/png,image/jpeg,image/webp"
                       className="hidden"
-                      onChange={(e) => uploadImage(e.target.files[0], (url) => setForm({ ...form, image_url: url }))}
+                      onChange={(e) => uploadImage(e.target.files[0], (url) => setForm(prev => ({ ...prev, image_url: url })))}
                     />
                   </label>
                   <input
                     data-testid="question-image-input"
                     value={form.image_url}
-                    onChange={(e) => setForm({ ...form, image_url: e.target.value })}
+                    onChange={(e) => setForm(prev => ({ ...prev, image_url: e.target.value }))}
                     placeholder="أو الصق الرابط هنا"
                     className="flex-1 border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none"
                   />
@@ -2188,13 +2211,13 @@ export default function AdminDashboard() {
                       type="file"
                       accept="image/png,image/jpeg,image/webp"
                       className="hidden"
-                      onChange={(e) => uploadImage(e.target.files[0], (url) => setForm({ ...form, answer_image_url: url }))}
+                      onChange={(e) => uploadImage(e.target.files[0], (url) => setForm(prev => ({ ...prev, answer_image_url: url })))}
                     />
                   </label>
                   <input
                     data-testid="question-answer-image-input"
                     value={form.answer_image_url}
-                    onChange={(e) => setForm({ ...form, answer_image_url: e.target.value })}
+                    onChange={(e) => setForm(prev => ({ ...prev, answer_image_url: e.target.value }))}
                     placeholder="أو الصق الرابط هنا"
                     className="flex-1 border-2 border-primary/20 focus:border-primary rounded-xl px-3 py-2 text-sm outline-none"
                   />
