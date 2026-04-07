@@ -66,7 +66,14 @@ A professional Arabic SaaS trivia game platform with multi-team support, subscri
 - [x] AI question generation (Gemini) with Unsplash image fetching
 - [x] Question deduplication in AI generation
 
-### Sprint 2 — 2026-02 (Current session)
+### Sprint 3 — 2026-02 (Current session)
+- [x] **QuickHostBar** — شريط تحكم سريع دائماً مرئي فوق لوحة اللعبة (+300/600/900 لكل فريق + تبديل الدور)
+- [x] **زر لوحة المضيف** — أكبر وأوضح مع animation نابضة gmpPulse
+- [x] **PendingQuestionCard** — مكوّن مستقل يعرض صورة السؤال وصورة الإجابة بشكل منفصل مع تعديل مباشر
+- [x] **Custom AI Prompt في استيراد الملفات** — textarea في قسم استيراد الملف يُمرَّر كـ extra_prompt للـ backend
+- [x] **PATCH /api/admin/questions/pending/{id}** — endpoint جديد لتحديث حقول الأسئلة المعلقة
+
+
 - [x] **Paylink.sa Payment Gateway** — `services/payment/paylinkService.py`
   - Auth → Create Invoice → Redirect to Paylink → Verify payment
   - Endpoints: POST /api/paylink/initiate, GET /api/paylink/verify/{txn}, GET /api/paylink/status/{txn}
