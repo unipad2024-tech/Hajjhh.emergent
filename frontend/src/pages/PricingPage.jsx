@@ -5,7 +5,6 @@ import { toast } from "sonner";
 import { useGame } from "@/context/GameContext";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
-const DARK_BG = { background: "radial-gradient(ellipse at top, #3D0810 0%, #1a0205 40%, #0f0102 100%)" };
 
 const PLANS = [
   {
@@ -82,7 +81,7 @@ export default function PricingPage() {
   const isPremium = currentUser?.subscription_type === "premium";
 
   return (
-    <div className="min-h-screen px-4 py-8" style={DARK_BG}>
+    <div className="min-h-screen px-4 py-8 bg-studio">
       <div className="pointer-events-none fixed inset-0 overflow-hidden">
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[600px] h-[400px] bg-secondary/5 blur-3xl rounded-full"/>
       </div>

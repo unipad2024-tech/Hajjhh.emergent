@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { useGame } from "@/context/GameContext";
 import { Eye, EyeOff } from "lucide-react";
 
-const DARK_BG = { background: "radial-gradient(ellipse at top, #3D0810 0%, #1a0205 40%, #0f0102 100%)" };
+
 
 // Defined OUTSIDE component to prevent re-mount on every render (focus loss bug)
 function PwInput({ testId, toggleId, value, onChange, placeholder, show, onToggle }) {
@@ -58,7 +58,7 @@ export default function SignupPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 py-8" style={DARK_BG}>
+    <div className="min-h-screen flex items-center justify-center px-4 py-8 bg-studio">
       <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden="true">
         <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-96 h-96 bg-secondary/5 blur-3xl rounded-full"/>
       </div>

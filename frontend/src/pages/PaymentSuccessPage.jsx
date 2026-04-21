@@ -4,7 +4,7 @@ import axios from "axios";
 import { useGame } from "@/context/GameContext";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
-const DARK_BG = { background: "radial-gradient(ellipse at top, #3D0810 0%, #1a0205 40%, #0f0102 100%)" };
+
 
 export default function PaymentSuccessPage() {
   const navigate = useNavigate();
@@ -60,7 +60,7 @@ export default function PaymentSuccessPage() {
   const m = messages[status];
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4" style={DARK_BG}>
+    <div className="min-h-screen flex items-center justify-center px-4 bg-studio">
       <div className="relative z-10 text-center max-w-sm w-full">
         <div
           className={`w-24 h-24 rounded-full flex items-center justify-center text-4xl mx-auto mb-6 border-2 ${

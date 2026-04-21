@@ -1,6 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
-  darkMode: ["class"],
+  darkMode: ["class", '[data-theme="dark"]'],
   content: ["./src/**/*.{js,jsx,ts,tsx}", "./public/index.html"],
   theme: {
     extend: {
@@ -10,24 +10,36 @@ module.exports = {
       },
       colors: {
         primary: {
-          DEFAULT: "#5B0E14",
-          dark: "#2A0409",
-          light: "#7D1A22",
-          foreground: "#F1E194",
+          DEFAULT: "var(--brand-burgundy)",
+          deep:    "var(--brand-burgundy-deep)",
+          mid:     "var(--brand-burgundy-mid)",
+          light:   "var(--brand-burgundy-light)",
+          foreground: "var(--brand-gold)",
         },
         secondary: {
-          DEFAULT: "#F1E194",
-          dark: "#C5B358",
-          light: "#F9F2C5",
-          foreground: "#2A0409",
+          DEFAULT:    "var(--brand-gold)",
+          dark:       "var(--brand-gold-muted)",
+          soft:       "var(--brand-gold-soft)",
+          light:      "var(--brand-gold-pale)",
+          foreground: "var(--brand-dark)",
         },
         background: {
-          DEFAULT: "#FDF6E3",
-          cream: "#FAF3E0",
-          dark: "#2A0409",
+          DEFAULT: "var(--brand-cream)",
+          cream:   "var(--brand-cream-warm)",
+          dark:    "var(--brand-dark)",
         },
-        gold: "#F1E194",
-        burgundy: "#5B0E14",
+        gold:     "var(--brand-gold)",
+        burgundy: "var(--brand-burgundy)",
+        team1: {
+          DEFAULT: "var(--color-team1)",
+          deep:    "var(--color-team1-deep)",
+          soft:    "var(--color-team1-soft)",
+        },
+        team2: {
+          DEFAULT: "var(--color-team2)",
+          deep:    "var(--color-team2-deep)",
+          soft:    "var(--color-team2-soft)",
+        },
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
@@ -56,6 +68,16 @@ module.exports = {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
+      },
+      boxShadow: {
+        "glow-sm": "var(--shadow-glow-sm)",
+        "glow-md": "var(--shadow-glow-md)",
+        "glow-lg": "var(--shadow-glow-lg)",
+        "card":    "var(--shadow-card)",
+        "card-elevated": "var(--shadow-card-elevated)",
+      },
+      fontFamily: {
+        tajawal: ["Tajawal", "sans-serif"],
       },
       keyframes: {
         "accordion-down": {

@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { useGame } from "@/context/GameContext";
 import { toast } from "sonner";
 
-const DARK_BG = { background: "radial-gradient(ellipse at top, #3D0810 0%, #1a0205 40%, #0f0102 100%)" };
 const COLORS = ["#ef4444","#3b82f6","#22c55e","#f59e0b","#a855f7","#ec4899","#14b8a6","#f97316"];
 
 function generateBracket(teams) {
@@ -62,7 +61,7 @@ export default function TournamentSetupPage() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-start px-4 py-8" style={DARK_BG}>
+    <div className="min-h-screen flex flex-col items-center justify-start px-4 py-8 bg-studio">
       <div className="w-full max-w-2xl animate-scale-in">
         <button
           onClick={() => navigate("/mode")}

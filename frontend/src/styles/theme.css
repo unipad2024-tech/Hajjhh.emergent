@@ -1,0 +1,226 @@
+/* ═══════════════════════════════════════════════════════════════
+   theme.css — نظام التصميم الموحّد لـ حُجّة (HUJJAH)
+   المرجع الوحيد للألوان — لا تضع hex codes في الصفحات
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ─── Brand Palette ─── */
+:root {
+  --brand-burgundy:      #5B0E14;
+  --brand-burgundy-deep: #2A0409;
+  --brand-burgundy-mid:  #3D0810;
+  --brand-burgundy-light:#7D1A22;
+  --brand-gold:          #F1E194;
+  --brand-gold-muted:    #C5B358;
+  --brand-gold-soft:     #D4C872;
+  --brand-gold-pale:     #F9F2C5;
+  --brand-cream:         #FDF6E3;
+  --brand-cream-warm:    #FAF3E0;
+  --brand-dark:          #2A0409;
+
+  /* ─── Semantic Aliases ─── */
+  --color-primary:       var(--brand-burgundy);
+  --color-primary-deep:  var(--brand-burgundy-deep);
+  --color-secondary:     var(--brand-gold);
+  --color-background:    var(--brand-cream);
+  --color-surface:       var(--brand-cream-warm);
+  --color-text:          var(--brand-dark);
+
+  --color-success:       #15803d;
+  --color-warning:       #d97706;
+  --color-danger:        #dc2626;
+  --color-info:          #2563eb;
+
+  /* ─── Team Tokens (قابلة للتخصيص من admin لاحقاً) ─── */
+  --color-team1:         #ef4444;
+  --color-team1-deep:    #7f1d1d;
+  --color-team1-soft:    rgba(239,68,68,0.15);
+  --color-team2:         #3b82f6;
+  --color-team2-deep:    #1e3a8a;
+  --color-team2-soft:    rgba(59,130,246,0.15);
+
+  /* ─── Gradients ─── */
+  --gradient-studio:
+    radial-gradient(ellipse at top,    var(--brand-burgundy-mid)  0%,
+                                       var(--brand-burgundy-deep) 40%,
+                                       #0f0102                    100%);
+  --gradient-parchment:
+    linear-gradient(135deg, var(--brand-cream) 0%, var(--brand-cream-warm) 100%);
+  --gradient-tile:
+    linear-gradient(145deg, rgba(91,14,20,0.8) 0%, rgba(42,4,9,0.95) 100%);
+  --gradient-gold-shine:
+    linear-gradient(90deg, var(--brand-gold-muted), var(--brand-gold), var(--brand-gold-muted));
+
+  /* ─── Shadows ─── */
+  --shadow-glow-sm:  0 0 15px rgba(241,225,148,0.25);
+  --shadow-glow-md:  0 0 30px rgba(241,225,148,0.4);
+  --shadow-glow-lg:  0 0 60px rgba(241,225,148,0.5);
+  --shadow-card:     0 4px 24px rgba(0,0,0,0.4), 0 1px 4px rgba(0,0,0,0.3);
+  --shadow-card-elevated: 0 8px 40px rgba(0,0,0,0.5), 0 0 20px rgba(241,225,148,0.1);
+
+  /* ─── Borders ─── */
+  --border-gold-dim:  1px solid rgba(241,225,148,0.2);
+  --border-gold-mid:  1px solid rgba(241,225,148,0.35);
+  --border-gold-bright: 1px solid rgba(241,225,148,0.6);
+
+  /* ─── Radius ─── */
+  --radius-sm:  0.5rem;
+  --radius-md:  0.75rem;
+  --radius-lg:  1rem;
+  --radius-xl:  1.5rem;
+  --radius-2xl: 2rem;
+}
+
+/* ─── Dark Mode Overrides ─── */
+[data-theme="dark"] {
+  --color-background: var(--brand-burgundy-deep);
+  --color-surface:    var(--brand-burgundy-mid);
+  --color-text:       var(--brand-gold-pale);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Composite Utility Classes
+   ═══════════════════════════════════════════════════════════════ */
+
+/* الخلفية الرئيسية للاستوديو — بديل DARK_BG القديم */
+.bg-studio {
+  background: var(--gradient-studio);
+  min-height: 100vh;
+}
+
+/* توهجات ذهبية محيطية — يوضع كأول child داخل .bg-studio */
+.studio-ambient {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 60% 40% at 20% 10%, rgba(241,225,148,0.06) 0%, transparent 60%),
+    radial-gradient(ellipse 40% 60% at 80% 80%, rgba(241,225,148,0.04) 0%, transparent 50%);
+  z-index: 0;
+}
+
+/* نقشة الزخرفة الإسلامية */
+.pattern-overlay-dark {
+  background-image: url("data:image/svg+xml,%3Csvg width='80' height='80' viewBox='0 0 80 80' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23F1E194' fill-opacity='0.04'%3E%3Cpath d='M40 0L50 20L70 20L55 32L60 52L40 40L20 52L25 32L10 20L30 20Z'/%3E%3C/g%3E%3C/svg%3E");
+  background-size: 80px 80px;
+}
+
+.pattern-overlay-light {
+  background-image: url("data:image/svg+xml,%3Csvg width='80' height='80' viewBox='0 0 80 80' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%235B0E14' fill-opacity='0.06'%3E%3Cpath d='M40 0L50 20L70 20L55 32L60 52L40 40L20 52L25 32L10 20L30 20Z'/%3E%3C/g%3E%3C/svg%3E");
+  background-size: 80px 80px;
+}
+
+/* ─── Cards ─── */
+.card-studio {
+  background: rgba(91,14,20,0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: var(--border-gold-dim);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-card);
+}
+
+.card-studio-elevated {
+  background: rgba(61,8,16,0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: var(--border-gold-mid);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-card-elevated);
+}
+
+/* ─── Buttons ─── */
+.btn-primary-studio {
+  background: var(--brand-gold);
+  color: var(--brand-dark);
+  font-weight: 700;
+  border-radius: var(--radius-lg);
+  padding: 0.75rem 2rem;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.2s, transform 0.15s, box-shadow 0.2s;
+  font-family: 'Cairo', sans-serif;
+}
+.btn-primary-studio:hover {
+  opacity: 0.92;
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-glow-sm);
+}
+.btn-primary-studio:active { transform: translateY(0); }
+
+.btn-ghost-studio {
+  background: transparent;
+  color: var(--brand-gold);
+  border: var(--border-gold-mid);
+  border-radius: var(--radius-lg);
+  padding: 0.625rem 1.5rem;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+  font-family: 'Cairo', sans-serif;
+}
+.btn-ghost-studio:hover {
+  background: rgba(241,225,148,0.08);
+  border-color: rgba(241,225,148,0.6);
+}
+
+/* ─── Input ─── */
+.input-studio {
+  background: rgba(42,4,9,0.5);
+  border: var(--border-gold-dim);
+  border-radius: var(--radius-md);
+  color: var(--brand-cream);
+  padding: 0.625rem 1rem;
+  font-family: 'Cairo', sans-serif;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  width: 100%;
+}
+.input-studio:focus {
+  outline: none;
+  border-color: rgba(241,225,148,0.6);
+  box-shadow: 0 0 0 3px rgba(241,225,148,0.12);
+}
+
+/* ─── Gold Text helpers (WCAG AA مضمون) ─── */
+/* ~5:1 على خلفية برجندي */
+.text-gold-muted { color: var(--brand-gold-muted); }
+/* ~4:1 */
+.text-gold-soft  { color: var(--brand-gold-soft);  }
+
+/* ═══════════════════════════════════════════════════════════════
+   Sonner Toast — Theming مخصّص (برجندي/ذهبي)
+   ═══════════════════════════════════════════════════════════════ */
+[data-sonner-toaster] [data-type="success"] {
+  background: var(--brand-burgundy-deep) !important;
+  border: 1px solid rgba(241,225,148,0.4) !important;
+  color: var(--brand-gold) !important;
+}
+[data-sonner-toaster] [data-type="error"] {
+  background: #3D0810 !important;
+  border: 1px solid rgba(220,38,38,0.5) !important;
+  color: #fca5a5 !important;
+}
+[data-sonner-toaster] [data-type="warning"] {
+  background: var(--brand-burgundy-deep) !important;
+  border: 1px solid rgba(217,119,6,0.5) !important;
+  color: #fcd34d !important;
+}
+[data-sonner-toaster] [data-type="info"] {
+  background: var(--brand-burgundy-deep) !important;
+  border: 1px solid rgba(241,225,148,0.3) !important;
+  color: var(--brand-gold-pale) !important;
+}
+[data-sonner-toaster] [data-close-button] {
+  background: rgba(241,225,148,0.1) !important;
+  border: var(--border-gold-dim) !important;
+  color: var(--brand-gold) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Reduced Motion
+   ═══════════════════════════════════════════════════════════════ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

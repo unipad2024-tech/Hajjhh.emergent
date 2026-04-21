@@ -1,8 +1,21 @@
-import React from "react";
+import React, { useEffect } from "react";
 import "@/App.css";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
-import { GameProvider } from "@/context/GameContext";
+import { GameProvider, useGame } from "@/context/GameContext";
 import { Toaster } from "sonner";
+
+/* يكتب data-theme="dark" على <html> عند تفعيل الـ dark mode */
+function ThemeSync() {
+  const { darkMode } = useGame();
+  useEffect(() => {
+    if (darkMode) {
+      document.documentElement.setAttribute("data-theme", "dark");
+    } else {
+      document.documentElement.removeAttribute("data-theme");
+    }
+  }, [darkMode]);
+  return null;
+}
 
 import HomePage from "@/pages/HomePage";
 import LoginPage from "@/pages/LoginPage";
@@ -23,6 +36,7 @@ import AdminDashboard from "@/pages/AdminDashboard";
 function App() {
   return (
     <GameProvider>
+      <ThemeSync />
       <div className="App" dir="rtl">
         <BrowserRouter>
           <Routes>
@@ -44,7 +58,13 @@ function App() {
             <Route path="/admin/dashboard" element={<AdminDashboard />} />
           </Routes>
         </BrowserRouter>
-        <Toaster position="top-center" richColors />
+        <Toaster
+          position="top-center"
+          dir="rtl"
+          closeButton
+          duration={3500}
+          toastOptions={{ style: { fontFamily: "'Cairo', sans-serif" } }}
+        />
       </div>
     </GameProvider>
   );

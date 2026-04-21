@@ -4,7 +4,6 @@ import axios from "axios";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-const DARK_BG = { background: "radial-gradient(ellipse at top, #3D0810 0%, #1a0205 40%, #0f0102 100%)" };
 
 export default function SecretWordPage() {
   const { questionId } = useParams();
@@ -38,7 +37,7 @@ export default function SecretWordPage() {
   const difficultyColor = data.difficulty === 200 ? "text-green-400" : data.difficulty === 400 ? "text-amber-400" : "text-red-400";
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4" style={DARK_BG}>
+    <div className="min-h-screen flex items-center justify-center px-4 bg-studio">
       <div className="text-center animate-scale-in max-w-sm w-full">
         {/* Header */}
         <div className="mb-8">

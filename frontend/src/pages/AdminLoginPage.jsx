@@ -6,7 +6,6 @@ import { Eye, EyeOff } from "lucide-react";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-const DARK_BG = { background: "radial-gradient(ellipse at top, #3D0810 0%, #1a0205 40%, #0f0102 100%)" };
 
 export default function AdminLoginPage() {
   const navigate = useNavigate();
@@ -36,7 +35,7 @@ export default function AdminLoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4" style={DARK_BG}>
+    <div className="min-h-screen flex items-center justify-center px-4 bg-studio">
       <div className="w-full max-w-sm animate-scale-in">
         <button
           onClick={() => navigate("/")}

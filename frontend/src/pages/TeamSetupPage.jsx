@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { useGame } from "@/context/GameContext";
 import { toast } from "sonner";
 
-const DARK_BG = { background: "radial-gradient(ellipse at top, #3D0810 0%, #1a0205 40%, #0f0102 100%)" };
 
 export default function TeamSetupPage() {
   const navigate = useNavigate();
@@ -29,7 +28,7 @@ export default function TeamSetupPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4" style={DARK_BG}>
+    <div className="min-h-screen flex items-center justify-center px-4 bg-studio">
       <div className="w-full max-w-lg animate-scale-in">
         {/* Back */}
         <button
