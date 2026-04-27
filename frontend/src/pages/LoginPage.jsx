@@ -7,7 +7,7 @@ import { Eye, EyeOff } from "lucide-react";
 
 export default function LoginPage() {
   const navigate = useNavigate();
-  const { loginUser } = useGame();
+  const { loginUser, playAsGuest } = useGame();
   const [form, setForm] = useState({ email: "", password: "" });
   const [loading, setLoading] = useState(false);
   const [showPw, setShowPw] = useState(false);
@@ -38,7 +38,7 @@ export default function LoginPage() {
 
       <div className="relative z-10 w-full max-w-sm animate-scale-in">
         <button
-          onClick={() => navigate("/")}
+          onClick={() => { playAsGuest(); navigate("/mode"); }}
           className="text-secondary/50 hover:text-secondary mb-6 flex items-center gap-2 transition-colors text-sm"
         >
           → العب كضيف بدون حساب

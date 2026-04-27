@@ -41,6 +41,7 @@ export const GameProvider = ({ children }) => {
   });
 
   // ─── Game Mode & Tournament ───────────────────────────────────────────────
+  const [isGuest, setIsGuest] = useState(() => localStorage.getItem("hujjah_guest") === "true");
   const [gameMode, setGameModeState] = useState(() => localStorage.getItem("hujjah_mode") || "standard");
   const [tournamentState, setTournamentState] = useState(() => {
     try { return JSON.parse(localStorage.getItem("hujjah_tournament") || "null"); } catch { return null; }
@@ -158,8 +159,15 @@ export const GameProvider = ({ children }) => {
   const logoutUser = () => {
     setCurrentUser(null);
     setUserToken(null);
+    setIsGuest(false);
     localStorage.removeItem("hujjah_user");
     localStorage.removeItem("hujjah_user_token");
+    localStorage.removeItem("hujjah_guest");
+  };
+
+  const playAsGuest = () => {
+    setIsGuest(true);
+    localStorage.setItem("hujjah_guest", "true");
   };
 
   const refreshUser = async () => {
@@ -254,7 +262,7 @@ export const GameProvider = ({ children }) => {
 
   return (
     <GameContext.Provider value={{
-      session, loading, currentUser, userToken, darkMode, gameSettings, currentTurn,
+      session, loading, currentUser, userToken, isGuest, darkMode, gameSettings, currentTurn,
       currentQuestion, setCurrentQuestion,
       remainingTime, setRemainingTime,
       selectedQuestions, markTileUsed, isTileUsed, restoreTile,
@@ -263,6 +271,7 @@ export const GameProvider = ({ children }) => {
       tournamentState, setTournament, updateTournament,
       createSession, updateSession, getNextQuestion, updateScore, setExactScore, adjustScoreDelta,
       resetGame, saveSession, loginUser, registerUser, logoutUser, refreshUser,
+      playAsGuest,
       toggleDarkMode, switchTurn, setTurn, resetTurn
     }}>
       {children}
