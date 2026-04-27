@@ -1,5 +1,6 @@
 {
-  "buildCommand": "npm install --legacy-peer-deps && npm install ajv@^8 --legacy-peer-deps && CI=false npm run build",
+  "installCommand": "npm install --legacy-peer-deps",
+  "buildCommand": "npm install ajv@^8 --legacy-peer-deps && CI=false npm run build",
   "outputDirectory": "build",
   "rewrites": [
     { "source": "/(.*)", "destination": "/index.html" }
